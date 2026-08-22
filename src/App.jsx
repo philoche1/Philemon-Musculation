@@ -2011,6 +2011,11 @@ const styles = {
   tabRow: {
     display: "flex",
     gap: 6,
+    overflowX: "auto",
+    flexWrap: "nowrap",
+    WebkitOverflowScrolling: "touch",
+    paddingBottom: 2,
+    marginBottom: -2,
   },
   tabBtn: {
     border: "none",
@@ -2020,6 +2025,8 @@ const styles = {
     fontWeight: 600,
     cursor: "pointer",
     fontFamily: FONT_BODY,
+    flexShrink: 0,
+    whiteSpace: "nowrap",
   },
   body: {
     padding: 20,
