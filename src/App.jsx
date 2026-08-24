@@ -1438,6 +1438,7 @@ function CircuitTimer({
                   min={5}
                   max={600}
                   value={workSeconds}
+                  onFocus={(e) => e.target.select()}
                   onChange={(e) => setWorkSeconds(Math.max(5, Number(e.target.value) || defaultWork))}
                   style={{ ...styles.numInput, width: 64 }}
                 />
@@ -1450,6 +1451,7 @@ function CircuitTimer({
                 min={5}
                 max={600}
                 value={restSeconds}
+                onFocus={(e) => e.target.select()}
                 onChange={(e) => setRestSeconds(Math.max(5, Number(e.target.value) || defaultRest))}
                 style={{ ...styles.numInput, width: 64 }}
               />
@@ -1461,6 +1463,7 @@ function CircuitTimer({
                 min={5}
                 max={600}
                 value={roundRestSeconds}
+                onFocus={(e) => e.target.select()}
                 onChange={(e) => setRoundRestSeconds(Math.max(5, Number(e.target.value) || defaultRoundRest))}
                 style={{ ...styles.numInput, width: 64 }}
               />
@@ -1474,7 +1477,15 @@ function CircuitTimer({
             min={1}
             max={10}
             value={rounds}
-            onChange={(e) => setRounds(Math.max(1, Math.min(10, Number(e.target.value) || 1)))}
+            onFocus={(e) => e.target.select()}
+            onChange={(e) => {
+              const raw = e.target.value;
+              if (raw === "") { setRounds(""); return; }
+              setRounds(Math.max(1, Math.min(10, Number(raw) || 1)));
+            }}
+            onBlur={(e) => {
+              if (e.target.value === "" || Number(e.target.value) < 1) setRounds(1);
+            }}
             style={{ ...styles.numInput, width: 56 }}
           />
           <button style={styles.timerBtn} onClick={start}>Démarrer le circuit</button>
@@ -3984,6 +3995,7 @@ function CTSettingsFields({ workSeconds, setWorkSeconds, restSeconds, setRestSec
           min={5}
           max={600}
           value={workSeconds}
+          onFocus={(e) => e.target.select()}
           onChange={(e) => setWorkSeconds(Math.max(5, Number(e.target.value) || WARMUP_WORK_SECONDS))}
           style={{ ...styles.numInput, width: 64 }}
         />
@@ -3995,6 +4007,7 @@ function CTSettingsFields({ workSeconds, setWorkSeconds, restSeconds, setRestSec
           min={5}
           max={600}
           value={restSeconds}
+          onFocus={(e) => e.target.select()}
           onChange={(e) => setRestSeconds(Math.max(5, Number(e.target.value) || WARMUP_REST_SECONDS))}
           style={{ ...styles.numInput, width: 64 }}
         />
@@ -4006,6 +4019,7 @@ function CTSettingsFields({ workSeconds, setWorkSeconds, restSeconds, setRestSec
           min={5}
           max={600}
           value={roundRestSeconds}
+          onFocus={(e) => e.target.select()}
           onChange={(e) => setRoundRestSeconds(Math.max(5, Number(e.target.value) || WARMUP_ROUND_REST_SECONDS))}
           style={{ ...styles.numInput, width: 64 }}
         />
@@ -4017,7 +4031,15 @@ function CTSettingsFields({ workSeconds, setWorkSeconds, restSeconds, setRestSec
           min={1}
           max={10}
           value={rounds}
-          onChange={(e) => setRounds(Math.max(1, Math.min(10, Number(e.target.value) || 1)))}
+          onFocus={(e) => e.target.select()}
+          onChange={(e) => {
+            const raw = e.target.value;
+            if (raw === "") { setRounds(""); return; }
+            setRounds(Math.max(1, Math.min(10, Number(raw) || 1)));
+          }}
+          onBlur={(e) => {
+            if (e.target.value === "" || Number(e.target.value) < 1) setRounds(1);
+          }}
           style={{ ...styles.numInput, width: 56 }}
         />
       </div>
