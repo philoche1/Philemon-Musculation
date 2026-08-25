@@ -6,14 +6,14 @@ const DEFAULT_DATA = {"exercises": [{"id": "ex1", "zone": "WARM UP", "groupe": "
 
 // (données de démo tronquées pour l'aperçu — le fichier complet reste sur GitHub)
 
-const LIBRARY_KEY = "library-v1-preview";
-const CLIENTS_KEY = "clients-v1-preview";
-const ROLE_KEY = "role-choice-v1-preview";
-const CLIENT_CHOICE_KEY = "client-choice-v1-preview";
-const COACH_ACCOUNT_KEY = "coach-account-v1-preview";
-const COACH_AUTH_KEY = "coach-authed-v1-preview";
-const sessionsKey = (clientId) => `sessions-v1-preview-${clientId}`;
-const profileKey = (clientId) => `profile-v1-preview-${clientId}`;
+const LIBRARY_KEY = "library-v1";
+const CLIENTS_KEY = "clients-v1";
+const ROLE_KEY = "role-choice-v1";
+const CLIENT_CHOICE_KEY = "client-choice-v1";
+const COACH_ACCOUNT_KEY = "coach-account-v1";
+const COACH_AUTH_KEY = "coach-authed-v1";
+const sessionsKey = (clientId) => `sessions-v1-${clientId}`;
+const profileKey = (clientId) => `profile-v1-${clientId}`;
 
 function uid(prefix) {
   return prefix + Math.random().toString(36).slice(2, 9);
