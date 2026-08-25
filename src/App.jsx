@@ -6,14 +6,14 @@ const DEFAULT_DATA = {"exercises": [{"id": "ex1", "zone": "WARM UP", "groupe": "
 
 // (données de démo tronquées pour l'aperçu — le fichier complet reste sur GitHub)
 
-const LIBRARY_KEY = "library-v1";
-const CLIENTS_KEY = "clients-v1";
-const ROLE_KEY = "role-choice-v1";
-const CLIENT_CHOICE_KEY = "client-choice-v1";
-const COACH_ACCOUNT_KEY = "coach-account-v1";
-const COACH_AUTH_KEY = "coach-authed-v1";
-const sessionsKey = (clientId) => `sessions-v1-${clientId}`;
-const profileKey = (clientId) => `profile-v1-${clientId}`;
+const LIBRARY_KEY = "library-v1-preview";
+const CLIENTS_KEY = "clients-v1-preview";
+const ROLE_KEY = "role-choice-v1-preview";
+const CLIENT_CHOICE_KEY = "client-choice-v1-preview";
+const COACH_ACCOUNT_KEY = "coach-account-v1-preview";
+const COACH_AUTH_KEY = "coach-authed-v1-preview";
+const sessionsKey = (clientId) => `sessions-v1-preview-${clientId}`;
+const profileKey = (clientId) => `profile-v1-preview-${clientId}`;
 
 function uid(prefix) {
   return prefix + Math.random().toString(36).slice(2, 9);
@@ -38,12 +38,14 @@ const PROFILE_FIELDS = [
 
 const DEFAULT_SERIES_COUNT = 4;
 const WARMUP_SERIES_COUNT = 3;
+const GAINAGE_SERIES_COUNT = 3;
 const ENDSESSION_SERIES_COUNT = 3;
 
 const DEFAULT_REPS = 12;
 const DEFAULT_CHARGE = 10;
 const WARMUP_DEFAULT_SECONDS = 50;
 const ENDSESSION_DEFAULT_RESPIRATION = 4;
+const GAINAGE_DEFAULT_SECONDS = 60;
 
 function isWarmupExercise(ex) {
   return !!ex && zoneLabel(ex.zone) === "Échauffement";
@@ -61,6 +63,10 @@ function isCardioExercise(ex) {
   return !!ex && zoneLabel(ex.zone) === "Cardio";
 }
 
+function isGainageExercise(ex) {
+  return !!ex && !!ex.nom && ex.nom.toLowerCase().includes("gainage");
+}
+
 function makeEntries(exerciceIds, exercisesMap) {
   const entries = [];
   exerciceIds.forEach((exId) => {
@@ -69,6 +75,7 @@ function makeEntries(exerciceIds, exercisesMap) {
     const endSession = isEndSessionExercise(ex);
     const mobility = isMobilityExercise(ex);
     const cardio = isCardioExercise(ex);
+    const gainage = isGainageExercise(ex);
     if (mobility || endSession || cardio) {
       entries.push({ exerciceId: exId, serie: 1, reps: null, charge: null });
       return;
@@ -79,6 +86,10 @@ function makeEntries(exerciceIds, exercisesMap) {
     if (warmup) {
       count = WARMUP_SERIES_COUNT;
       repsDefault = WARMUP_DEFAULT_SECONDS;
+    } else if (gainage) {
+      count = GAINAGE_SERIES_COUNT;
+      repsDefault = GAINAGE_DEFAULT_SECONDS;
+      chargeDefault = null;
     }
     for (let s = 1; s <= count; s++) {
       entries.push({ exerciceId: exId, serie: s, reps: repsDefault, charge: chargeDefault });
@@ -979,6 +990,7 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
                       type="number"
                       min={0}
                       value={offsetInput}
+                      onFocus={(e) => e.target.select()}
                       onChange={(e) => setOffsetInput(e.target.value)}
                       style={{ ...styles.numInput, width: 64 }}
                       autoFocus
@@ -1167,7 +1179,7 @@ function playBeep(count = 2, toneDuration = 0.3) {
       osc.type = "sine";
       osc.frequency.value = 880;
       gain.gain.setValueAtTime(0.0001, startTime);
-      gain.gain.exponentialRampToValueAtTime(0.35, startTime + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.9, startTime + 0.01);
       gain.gain.exponentialRampToValueAtTime(0.0001, startTime + toneDuration - 0.05);
       osc.connect(gain);
       gain.connect(ctx.destination);
@@ -1262,6 +1274,99 @@ function RestTimer({ duration }) {
         <button style={styles.timerResetBtn} onClick={reset}>Réinitialiser</button>
       )}
       {finished && <span style={{ fontSize: 12, color: COLORS.accent, fontWeight: 600 }}>Récupération terminée</span>}
+    </div>
+  );
+}
+
+function GainageTimer({ defaultDuration = 60 }) {
+  const [duration, setDuration] = useState(defaultDuration);
+  const [secondsLeft, setSecondsLeft] = useState(defaultDuration);
+  const [running, setRunning] = useState(false);
+  const beepedRef = useRef(false);
+
+  useEffect(() => {
+    if (!running) {
+      setSecondsLeft(duration);
+      beepedRef.current = false;
+    }
+  }, [duration]);
+
+  useEffect(() => {
+    if (secondsLeft === 0) {
+      if (!beepedRef.current) {
+        playBeep(2);
+        beepedRef.current = true;
+      }
+    } else {
+      beepedRef.current = false;
+    }
+  }, [secondsLeft]);
+
+  useEffect(() => {
+    if (!running) return;
+    if (secondsLeft <= 0) {
+      setRunning(false);
+      return;
+    }
+    const id = setInterval(() => {
+      setSecondsLeft((s) => {
+        if (s <= 1) {
+          setRunning(false);
+          return 0;
+        }
+        return s - 1;
+      });
+    }, 1000);
+    return () => clearInterval(id);
+  }, [running, secondsLeft > 0]);
+
+  const toggle = () => {
+    if (secondsLeft <= 0) {
+      setSecondsLeft(duration);
+      setRunning(true);
+      playBeep(1);
+    } else if (running) {
+      setRunning(false);
+    } else {
+      setRunning(true);
+      playBeep(1);
+    }
+  };
+
+  const reset = () => {
+    setRunning(false);
+    setSecondsLeft(duration);
+  };
+
+  const finished = secondsLeft <= 0;
+  const notStarted = !running && secondsLeft === duration;
+
+  return (
+    <div style={styles.timerPanel}>
+      {notStarted && (
+        <>
+          <input
+            type="number"
+            min={5}
+            max={600}
+            value={duration}
+            onFocus={(e) => e.target.select()}
+            onChange={(e) => setDuration(Math.max(5, Number(e.target.value) || defaultDuration))}
+            style={{ ...styles.numInput, width: 56 }}
+          />
+          <span style={styles.unitLabel}>sec</span>
+        </>
+      )}
+      <span style={{ ...styles.timerDisplay, color: finished ? COLORS.accent : COLORS.text }}>
+        {formatTimer(secondsLeft)}
+      </span>
+      <button style={{ ...styles.timerBtn, ...(running ? styles.timerBtnActive : {}) }} onClick={toggle}>
+        {finished ? "Relancer" : running ? "Pause" : "Démarrer"}
+      </button>
+      {(running || secondsLeft !== duration) && (
+        <button style={styles.timerResetBtn} onClick={reset}>Réinitialiser</button>
+      )}
+      {finished && <span style={{ fontSize: 12, color: COLORS.accent, fontWeight: 600 }}>Effort terminé</span>}
     </div>
   );
 }
@@ -1410,6 +1515,7 @@ function CircuitTimer({
                     min={0}
                     max={59}
                     value={Math.floor(workSeconds / 60)}
+                    onFocus={(e) => e.target.select()}
                     onChange={(e) => {
                       const m = Math.max(0, Number(e.target.value) || 0);
                       const s = workSeconds % 60;
@@ -1423,6 +1529,7 @@ function CircuitTimer({
                     min={0}
                     max={59}
                     value={workSeconds % 60}
+                    onFocus={(e) => e.target.select()}
                     onChange={(e) => {
                       const s = Math.max(0, Math.min(59, Number(e.target.value) || 0));
                       const m = Math.floor(workSeconds / 60);
@@ -1710,12 +1817,14 @@ function SessionCard({ session, exercises, allSessions, programName, expanded, o
                 const endSession = isEndSessionExercise(ex);
                 const mobility = isMobilityExercise(ex);
                 const cardio = isCardioExercise(ex);
+                const gainage = isGainageExercise(ex);
                 const showTimerBtn = ex && (zoneLabel(ex.zone) === "BAS DU CORPS" || zoneLabel(ex.zone) === "HAUT DU CORPS");
                 return (
                   <div key={exId} style={{ marginBottom: 14 }}>
                     <div style={{ fontSize: 13, color: COLORS.accent2, marginBottom: 6, fontFamily: FONT_BODY, fontWeight: 600 }}>
                       {ex ? exDisplayName(ex) : "Exercice"}
                       {warmup && <span style={{ color: COLORS.textFaint, fontWeight: 400, fontSize: 11 }}> — temps en secondes</span>}
+                      {gainage && <span style={{ color: COLORS.textFaint, fontWeight: 400, fontSize: 11 }}> — temps d'effort en secondes</span>}
                     </div>
                     {(mobility || endSession) ? (
                       (showConsignesBtn || showVideoBtn) && (
@@ -1749,6 +1858,7 @@ function SessionCard({ session, exercises, allSessions, programName, expanded, o
                           type="number"
                           min={0}
                           value={rows[0] ? Math.floor((rows[0].reps ?? 0) / 60) : 0}
+                          onFocus={(e) => e.target.select()}
                           onChange={(e) => {
                             const m = Math.max(0, Number(e.target.value) || 0);
                             const s = (rows[0]?.reps ?? 0) % 60;
@@ -1762,6 +1872,7 @@ function SessionCard({ session, exercises, allSessions, programName, expanded, o
                           min={0}
                           max={59}
                           value={rows[0] ? (rows[0].reps ?? 0) % 60 : 0}
+                          onFocus={(e) => e.target.select()}
                           onChange={(e) => {
                             const s = Math.max(0, Math.min(59, Number(e.target.value) || 0));
                             const m = Math.floor((rows[0]?.reps ?? 0) / 60);
@@ -1803,16 +1914,18 @@ function SessionCard({ session, exercises, allSessions, programName, expanded, o
                         <input
                           type="number"
                           value={row.reps ?? ""}
+                          onFocus={(e) => e.target.select()}
                           onChange={(e) => updateField(row._idx, "reps", e.target.value)}
-                          placeholder={warmup ? "Sec." : endSession ? "Resp." : "Rép."}
+                          placeholder={warmup ? "Sec." : endSession ? "Resp." : gainage ? "Sec." : "Rép."}
                           style={styles.numInput}
                         />
-                        <span style={styles.unitLabel}>{warmup ? '"' : endSession ? "resp" : "rep"}</span>
-                        {!endSession && (
+                        <span style={styles.unitLabel}>{warmup ? '"' : endSession ? "resp" : gainage ? '"' : "rep"}</span>
+                        {!endSession && !gainage && (
                           <>
                             <input
                               type="number"
                               value={row.charge ?? ""}
+                              onFocus={(e) => e.target.select()}
                               onChange={(e) => updateField(row._idx, "charge", e.target.value)}
                               placeholder="Kg"
                               style={styles.numInput}
@@ -1823,9 +1936,19 @@ function SessionCard({ session, exercises, allSessions, programName, expanded, o
                         {prev && (
                           <span style={styles.prevValue}>
                             Dernière fois : {prev.reps ?? "—"}
-                            {warmup ? "s" : endSession ? " resp." : " rép."}
-                            {!endSession && <> · {prev.charge ?? "—"} kg</>}
+                            {warmup ? "s" : endSession ? " resp." : gainage ? "s" : " rép."}
+                            {!endSession && !gainage && <> · {prev.charge ?? "—"} kg</>}
                           </span>
+                        )}
+                        {gainage && (
+                          <button
+                            style={{ ...styles.infoBtn, ...styles.infoBtnTimer, ...(openTimer[timerKey] ? styles.infoBtnActive : {}) }}
+                            onClick={() => setOpenTimer((p) => ({ ...p, [timerKey]: !p[timerKey] }))}
+                            title="Chrono d'effort"
+                            aria-label="Chrono d'effort"
+                          >
+                            ⏱️ Chrono
+                          </button>
                         )}
                         {showTimerBtn && (
                           <button
@@ -1858,7 +1981,7 @@ function SessionCard({ session, exercises, allSessions, programName, expanded, o
                           </button>
                         )}
                       </div>
-                      {openTimer[timerKey] && <RestTimer duration={restDurationForSet(row.serie)} />}
+                      {openTimer[timerKey] && (gainage ? <GainageTimer defaultDuration={60} /> : <RestTimer duration={restDurationForSet(row.serie)} />)}
                       </React.Fragment>
                       );
                     })}
