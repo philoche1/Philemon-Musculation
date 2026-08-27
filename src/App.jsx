@@ -6,14 +6,14 @@ const DEFAULT_DATA = {"exercises": [{"id": "ex1", "zone": "WARM UP", "groupe": "
 
 // (données de démo tronquées pour l'aperçu — le fichier complet reste sur GitHub)
 
-const LIBRARY_KEY = "library-v1-preview";
-const CLIENTS_KEY = "clients-v1-preview";
-const ROLE_KEY = "role-choice-v1-preview";
-const CLIENT_CHOICE_KEY = "client-choice-v1-preview";
-const COACH_ACCOUNT_KEY = "coach-account-v1-preview";
-const COACH_AUTH_KEY = "coach-authed-v1-preview";
-const sessionsKey = (clientId) => `sessions-v1-preview-${clientId}`;
-const profileKey = (clientId) => `profile-v1-preview-${clientId}`;
+const LIBRARY_KEY = "library-v1";
+const CLIENTS_KEY = "clients-v1";
+const ROLE_KEY = "role-choice-v1";
+const CLIENT_CHOICE_KEY = "client-choice-v1";
+const COACH_ACCOUNT_KEY = "coach-account-v1";
+const COACH_AUTH_KEY = "coach-authed-v1";
+const sessionsKey = (clientId) => `sessions-v1-${clientId}`;
+const profileKey = (clientId) => `profile-v1-${clientId}`;
 
 function uid(prefix) {
   return prefix + Math.random().toString(36).slice(2, 9);
@@ -48,19 +48,19 @@ const ENDSESSION_DEFAULT_RESPIRATION = 4;
 const GAINAGE_DEFAULT_SECONDS = 60;
 
 function isWarmupExercise(ex) {
-  return !!ex && zoneLabel(ex.zone) === "Échauffement";
+  return !!ex && getExerciseZones(ex).some((z) => zoneLabel(z) === "Échauffement");
 }
 
 function isEndSessionExercise(ex) {
-  return !!ex && zoneLabel(ex.zone) === "Étirements";
+  return !!ex && getExerciseZones(ex).some((z) => zoneLabel(z) === "Étirements");
 }
 
 function isMobilityExercise(ex) {
-  return !!ex && zoneLabel(ex.zone) === "Mobilité";
+  return !!ex && getExerciseZones(ex).some((z) => zoneLabel(z) === "Mobilité");
 }
 
 function isCardioExercise(ex) {
-  return !!ex && zoneLabel(ex.zone) === "Cardio";
+  return !!ex && getExerciseZones(ex).some((z) => zoneLabel(z) === "Cardio");
 }
 
 function isGainageExercise(ex) {
@@ -180,12 +180,14 @@ export default function App() {
           ctTypes: [],
           ctPrograms: [],
           alimentationVideos: { matin: "", midi: "", gouter: "", soir: "" },
+          ctLevelNames: ["Niveau 1", "Niveau 2", "Niveau 3", "Niveau 4", "Niveau 5"],
         };
         try { await window.storage.set(LIBRARY_KEY, JSON.stringify(lib), true); } catch (e) {}
       } else {
         if (!lib.ctTypes) lib.ctTypes = [];
         if (!lib.ctPrograms) lib.ctPrograms = [];
         if (!lib.alimentationVideos) lib.alimentationVideos = { matin: "", midi: "", gouter: "", soir: "" };
+        if (!lib.ctLevelNames) lib.ctLevelNames = ["Niveau 1", "Niveau 2", "Niveau 3", "Niveau 4", "Niveau 5"];
       }
 
       setClients(cl);
@@ -480,7 +482,7 @@ export default function App() {
               />
             )}
             {view === "progression" && <ProgressionView data={data} />}
-            {view === "ct" && <CTView data={data} activeClient={activeClient} />}
+            {view === "ct" && <CTView data={data} activeClient={activeClient} clientId={clientId} role={role} persistLibrary={persistLibrary} />}
             {view === "alimentation" && <AlimentationView clientId={clientId} role={role} data={data} persistLibrary={persistLibrary} activeClient={activeClient} assignMealPlan={assignMealPlan} />}
             {view === "programmes" && (
               <ProgrammesView
@@ -867,34 +869,107 @@ function zoneLabel(zone) {
   return zone;
 }
 
+function getExerciseZones(ex) {
+  if (!ex) return [];
+  if (Array.isArray(ex.zones) && ex.zones.length) return ex.zones;
+  return ex.zone ? [ex.zone] : [];
+}
+
+function getExerciseGroupes(ex) {
+  if (!ex) return [];
+  if (Array.isArray(ex.groupes) && ex.groupes.length) return ex.groupes;
+  return ex.groupe ? ex.groupe.split("\n").filter(Boolean) : [];
+}
+
+function getExerciseNiveaux(ex, fallbackNames) {
+  const raw = ex && Array.isArray(ex.niveaux) ? ex.niveaux : [];
+  const custom = raw
+    .map((n) => (typeof n === "string" ? { nom: n, consignes: {}, videoUrl: "" } : n))
+    .filter((n) => n && n.nom && n.nom.trim());
+  if (custom.length) return custom;
+  const defaults = fallbackNames && fallbackNames.length ? fallbackNames : ["Niveau 1", "Niveau 2", "Niveau 3", "Niveau 4", "Niveau 5"];
+  return defaults.map((nom) => ({ nom, consignes: {}, videoUrl: "" }));
+}
+
 function exDisplayName(ex) {
   if (!ex) return "";
   const nom = ex.nom.replace(/\n/g, " ");
-  return ex.groupe ? `${nom} (${ex.groupe.replace(/\n/g, " ")})` : nom;
+  const groupes = getExerciseGroupes(ex);
+  return groupes.length ? `${nom} (${groupes.join(", ")})` : nom;
 }
 
+const ZONE_RANK_ORDER = { "Mobilité": 0, "Échauffement": 1, "BAS DU CORPS": 2, "HAUT DU CORPS": 3, "CENTRE DU CORPS": 4, "Cardio": 5, "Étirements": 6 };
+function zoneRank(label) {
+  return label in ZONE_RANK_ORDER ? ZONE_RANK_ORDER[label] : 4.5;
+}
+
+// Clé composite (exercice + zone) pour permettre une sélection indépendante
+// d'un même exercice selon la catégorie dans laquelle on le coche.
+function selKey(exId, zoneLbl) {
+  return `${exId}__${zoneLbl}`;
+}
+
+// À partir des clés composites cochées, construit la liste finale d'exerciceIds
+// (dédupliquée) et le niveau retenu pour chacun (celui de sa zone principale
+// si elle a été cochée, sinon celui de la première zone cochée).
+function finalizeSelection(selectedKeys, niveauxByKey, exercisesMap) {
+  const keysByExId = {};
+  selectedKeys.forEach((k) => {
+    const exId = k.split("__")[0];
+    if (!keysByExId[exId]) keysByExId[exId] = [];
+    keysByExId[exId].push(k);
+  });
+  const exerciceIds = Object.keys(keysByExId);
+  const niveaux = {};
+  exerciceIds.forEach((exId) => {
+    const ex = exercisesMap[exId];
+    const primaryZone = zoneLabel(getExerciseZones(ex)[0]);
+    const preferredKey = selKey(exId, primaryZone);
+    const keys = keysByExId[exId];
+    const chosenKey = keys.includes(preferredKey) ? preferredKey : keys[0];
+    if (niveauxByKey[chosenKey] != null) niveaux[exId] = niveauxByKey[chosenKey];
+  });
+  return { exerciceIds, niveaux };
+}
+
+// Regroupe chaque exercice sous sa seule zone principale (la première).
+// Utilisé pour l'affichage des séries en cours de séance, afin de ne jamais
+// dupliquer les champs de saisie d'un même exercice.
 function groupExIdsByZone(exIds, exercises) {
   const order = [];
   const byZone = {};
   exIds.forEach((exId) => {
     const ex = exercises[exId];
-    const label = zoneLabel(ex ? ex.zone : null);
+    const zones = getExerciseZones(ex);
+    const label = zoneLabel(zones[0]);
     if (!byZone[label]) {
       byZone[label] = [];
       order.push(label);
     }
     byZone[label].push(exId);
   });
-  const zoneRank = (label) => {
-    if (label === "Mobilité") return 0;
-    if (label === "Échauffement") return 1;
-    if (label === "BAS DU CORPS") return 2;
-    if (label === "HAUT DU CORPS") return 3;
-    if (label === "CENTRE DU CORPS") return 4;
-    if (label === "Cardio") return 5;
-    if (label === "Étirements") return 6;
-    return 4.5;
-  };
+  order.sort((a, b) => zoneRank(a) - zoneRank(b));
+  return order.map((label) => [label, byZone[label]]);
+}
+
+// Regroupe chaque exercice sous TOUTES ses zones (un exercice avec plusieurs
+// zones apparaît dans chacune). Utilisé pour le catalogue et les cases à
+// cocher de sélection d'exercices, où la duplication est sans risque.
+function groupExIdsByZoneMulti(exIds, exercises) {
+  const order = [];
+  const byZone = {};
+  exIds.forEach((exId) => {
+    const ex = exercises[exId];
+    const zones = getExerciseZones(ex);
+    (zones.length ? zones : [null]).forEach((zone) => {
+      const label = zoneLabel(zone);
+      if (!byZone[label]) {
+        byZone[label] = [];
+        order.push(label);
+      }
+      byZone[label].push(exId);
+    });
+  });
   order.sort((a, b) => zoneRank(a) - zoneRank(b));
   return order.map((label) => [label, byZone[label]]);
 }
@@ -1081,7 +1156,7 @@ function SuiviView({ data, persistSessions, role, activeClient }) {
 
   const startFromTemplate = (seanceType) => {
     const entries = makeEntries(seanceType.exerciceIds, exercises);
-    addSession({ id: uid("se"), date: quickDate, seanceNom: seanceType.nom, entries });
+    addSession({ id: uid("se"), date: quickDate, seanceNom: seanceType.nom, entries, niveaux: seanceType.niveaux || {} });
   };
 
   return (
@@ -1396,6 +1471,36 @@ function buildCircuitPhases(exerciseNames, rounds, workSeconds, restSeconds, rou
   return phases;
 }
 
+// Construit les phases du chrono directement depuis le tableau CT (postes × tours) :
+// chaque tour = passer par tous les postes (avec l'exercice/niveau propre à ce tour),
+// repos entre chaque poste, puis repos entre les tours.
+function buildCTTablePhases(rows, rounds, workSeconds, restSeconds, roundRestSeconds, exercisesMap, levelNames) {
+  const activeRows = rows.filter((row) => row.cells.some((c) => c.exerciceId));
+  if (activeRows.length === 0) return [];
+  const phases = [];
+  for (let r = 0; r < rounds; r++) {
+    activeRows.forEach((row, idx) => {
+      const cell = row.cells[r] || {};
+      const ex = exercisesMap[cell.exerciceId];
+      const niveaux = getExerciseNiveaux(ex, levelNames);
+      const niv = niveaux[(cell.niveau || 1) - 1];
+      const label = ex
+        ? `${exDisplayName(ex)}${niv ? " — " + niv.nom : ""}`
+        : (row.groupe || `Exercice ${idx + 1}`);
+      phases.push({ type: "work", label, duration: workSeconds, round: r + 1 });
+      const isLastPosteOfRound = idx === activeRows.length - 1;
+      const isVeryLast = r === rounds - 1 && isLastPosteOfRound;
+      if (isVeryLast) return;
+      if (isLastPosteOfRound) {
+        phases.push({ type: "roundRest", label: "Repos entre tours", duration: roundRestSeconds, round: r + 1 });
+      } else {
+        phases.push({ type: "rest", label: "Repos", duration: restSeconds, round: r + 1 });
+      }
+    });
+  }
+  return phases;
+}
+
 function CircuitTimer({
   exerciseNames,
   title = "Circuit d'échauffement",
@@ -1404,6 +1509,8 @@ function CircuitTimer({
   defaultRoundRest = WARMUP_ROUND_REST_SECONDS,
   defaultRounds = 2,
   workInMinutes = false,
+  customPhases = null,
+  customSummary = null,
 }) {
   const [rounds, setRounds] = useState(defaultRounds);
   const [workSeconds, setWorkSeconds] = useState(defaultWork);
@@ -1415,7 +1522,9 @@ function CircuitTimer({
   const [secondsLeft, setSecondsLeft] = useState(0);
   const [running, setRunning] = useState(false);
 
-  const phases = buildCircuitPhases(exerciseNames, rounds, workSeconds, restSeconds, roundRestSeconds);
+  const phases = customPhases && customPhases.length
+    ? customPhases
+    : buildCircuitPhases(exerciseNames, rounds, workSeconds, restSeconds, roundRestSeconds);
   const currentPhase = phases[phaseIndex];
   const done = started && !running && secondsLeft === 0 && phaseIndex >= phases.length - 1;
 
@@ -1490,21 +1599,24 @@ function CircuitTimer({
 
   const totalSeconds = phases.reduce((sum, p) => sum + p.duration, 0);
 
-  if (exerciseNames.length === 0) return null;
+  if (!customPhases && exerciseNames.length === 0) return null;
+  if (customPhases && customPhases.length === 0) return null;
 
   if (!started) {
     return (
       <div style={styles.circuitPanel}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
           <div style={styles.circuitTitle}>{title}</div>
-          <button style={styles.linkBtn} onClick={() => setShowSettings((s) => !s)}>
-            {showSettings ? "Masquer les paramètres" : "Paramètres"}
-          </button>
+          {!customPhases && (
+            <button style={styles.linkBtn} onClick={() => setShowSettings((s) => !s)}>
+              {showSettings ? "Masquer les paramètres" : "Paramètres"}
+            </button>
+          )}
         </div>
         <div style={{ fontSize: 12, color: COLORS.textDim, margin: "4px 0 10px" }}>
-          {exerciseNames.length} exercice{exerciseNames.length > 1 ? "s" : ""} · {workInMinutes ? formatTimer(workSeconds) : `${workSeconds}s`} d'effort / {restSeconds}s de repos · {roundRestSeconds}s entre les tours · durée totale ≈ {formatTimer(totalSeconds)}
+          {customSummary || `${exerciseNames.length} exercice${exerciseNames.length > 1 ? "s" : ""} · ${workInMinutes ? formatTimer(workSeconds) : `${workSeconds}s`} d'effort / ${restSeconds}s de repos · ${roundRestSeconds}s entre les tours · durée totale ≈ ${formatTimer(totalSeconds)}`}
         </div>
-        {showSettings && (
+        {!customPhases && showSettings && (
           <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 12, padding: "10px 12px", background: COLORS.card, borderRadius: 8, border: `1px solid ${COLORS.cardBorder}` }}>
             <div>
               <label style={{ fontSize: 12, color: COLORS.textDim, display: "block", marginBottom: 4 }}>Effort {workInMinutes ? "(min / sec)" : "(s)"}</label>
@@ -1578,23 +1690,27 @@ function CircuitTimer({
           </div>
         )}
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <label style={{ fontSize: 13, color: COLORS.textDim }}>Nombre de tours</label>
-          <input
-            type="number"
-            min={1}
-            max={10}
-            value={rounds}
-            onFocus={(e) => e.target.select()}
-            onChange={(e) => {
-              const raw = e.target.value;
-              if (raw === "") { setRounds(""); return; }
-              setRounds(Math.max(1, Math.min(10, Number(raw) || 1)));
-            }}
-            onBlur={(e) => {
-              if (e.target.value === "" || Number(e.target.value) < 1) setRounds(1);
-            }}
-            style={{ ...styles.numInput, width: 56 }}
-          />
+          {!customPhases && (
+            <>
+              <label style={{ fontSize: 13, color: COLORS.textDim }}>Nombre de tours</label>
+              <input
+                type="number"
+                min={1}
+                max={10}
+                value={rounds}
+                onFocus={(e) => e.target.select()}
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  if (raw === "") { setRounds(""); return; }
+                  setRounds(Math.max(1, Math.min(10, Number(raw) || 1)));
+                }}
+                onBlur={(e) => {
+                  if (e.target.value === "" || Number(e.target.value) < 1) setRounds(1);
+                }}
+                style={{ ...styles.numInput, width: 56 }}
+              />
+            </>
+          )}
           <button style={styles.timerBtn} onClick={start}>Démarrer le circuit</button>
         </div>
       </div>
@@ -1615,12 +1731,23 @@ function CircuitTimer({
 
   const isRest = currentPhase.type === "rest" || currentPhase.type === "roundRest";
   const isRoundRest = currentPhase.type === "roundRest";
+  const totalRounds = customPhases ? Math.max(...phases.map((p) => p.round)) : rounds;
+  const totalExercisesInRound = phases.filter((p) => p.round === currentPhase.round && p.type === "work").length;
+  let exerciseIndexInRound = 0;
+  for (let i = 0; i <= phaseIndex; i++) {
+    if (phases[i].round === currentPhase.round && phases[i].type === "work") exerciseIndexInRound++;
+  }
 
   return (
     <div style={styles.circuitPanel}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
         <div style={styles.circuitTitle}>{title}</div>
-        <span style={{ fontSize: 12, color: COLORS.textFaint }}>Tour {currentPhase.round}/{rounds}</span>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
+          <span style={{ fontSize: 12, color: COLORS.textFaint }}>Tour {currentPhase.round}/{totalRounds}</span>
+          {totalExercisesInRound > 0 && (
+            <span style={{ fontSize: 11, color: COLORS.textFaint }}>Exercice {exerciseIndexInRound}/{totalExercisesInRound}</span>
+          )}
+        </div>
       </div>
       <div style={{ fontSize: 13, fontWeight: 700, color: isRest ? COLORS.accent2 : COLORS.accent, marginBottom: 4 }}>
         {isRoundRest ? "Repos entre tours" : isRest ? "Repos" : currentPhase.label}
@@ -1665,6 +1792,15 @@ function SessionCard({ session, exercises, allSessions, programName, expanded, o
   const [openConsignes, setOpenConsignes] = useState({});
   const [openVideo, setOpenVideo] = useState({});
   const [openTimer, setOpenTimer] = useState({});
+  const [niveauxParExercice, setNiveauxParExercice] = useState(session.niveaux || {});
+  const [niveauxDirty, setNiveauxDirty] = useState(false);
+  const [openNiveauConsignes, setOpenNiveauConsignes] = useState({});
+  const [openNiveauVideo, setOpenNiveauVideo] = useState({});
+
+  useEffect(() => {
+    setNiveauxParExercice(session.niveaux || {});
+    setNiveauxDirty(false);
+  }, [session.niveaux]);
 
   useEffect(() => {
     setLocal(session.entries);
@@ -1719,6 +1855,25 @@ function SessionCard({ session, exercises, allSessions, programName, expanded, o
   const updateField = (idx, field, value) => {
     const copy = local.map((e, i) => (i === idx ? { ...e, [field]: value === "" ? null : Number(value) } : e));
     setLocal(copy);
+    setDirty(true);
+  };
+
+  const addSerie = (exerciceId) => {
+    const rowsForEx = local.filter((e) => e.exerciceId === exerciceId);
+    const maxSerie = rowsForEx.length ? Math.max(...rowsForEx.map((e) => e.serie)) : 0;
+    const template = rowsForEx[rowsForEx.length - 1];
+    const newEntry = {
+      exerciceId,
+      serie: maxSerie + 1,
+      reps: template ? template.reps : null,
+      charge: template ? template.charge : null,
+    };
+    setLocal((prev) => [...prev, newEntry]);
+    setDirty(true);
+  };
+
+  const removeSerie = (exerciceId, serie) => {
+    setLocal((prev) => prev.filter((e) => !(e.exerciceId === exerciceId && e.serie === serie)));
     setDirty(true);
   };
 
@@ -1791,12 +1946,16 @@ function SessionCard({ session, exercises, allSessions, programName, expanded, o
               <div style={{ fontSize: 11, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8, paddingBottom: 4, borderBottom: `1px solid ${COLORS.cardBorder}` }}>
                 {label}
               </div>
-              {label === "Échauffement" && ids.length > 0 && (
-                <CircuitTimer
-                  key={ids.join(",")}
-                  exerciseNames={ids.map((id) => (exercises[id] ? exercises[id].nom.replace(/\n/g, " ") : "Exercice"))}
-                />
-              )}
+              {label === "Échauffement" && ids.length > 0 && (() => {
+                const warmupRounds = Math.max(1, ...ids.map((id) => (grouped[id] ? grouped[id].length : WARMUP_SERIES_COUNT)));
+                return (
+                  <CircuitTimer
+                    key={ids.join(",") + "_" + warmupRounds}
+                    defaultRounds={warmupRounds}
+                    exerciseNames={ids.map((id) => (exercises[id] ? exercises[id].nom.replace(/\n/g, " ") : "Exercice"))}
+                  />
+                );
+              })()}
               {label === "Cardio" && ids.length > 0 && (
                 <CircuitTimer
                   key={ids.join(",")}
@@ -1818,7 +1977,7 @@ function SessionCard({ session, exercises, allSessions, programName, expanded, o
                 const mobility = isMobilityExercise(ex);
                 const cardio = isCardioExercise(ex);
                 const gainage = isGainageExercise(ex);
-                const showTimerBtn = ex && (zoneLabel(ex.zone) === "BAS DU CORPS" || zoneLabel(ex.zone) === "HAUT DU CORPS");
+                const showTimerBtn = ex && getExerciseZones(ex).some((z) => zoneLabel(z) === "BAS DU CORPS" || zoneLabel(z) === "HAUT DU CORPS");
                 return (
                   <div key={exId} style={{ marginBottom: 14 }}>
                     <div style={{ fontSize: 13, color: COLORS.accent2, marginBottom: 6, fontFamily: FONT_BODY, fontWeight: 600 }}>
@@ -1826,6 +1985,70 @@ function SessionCard({ session, exercises, allSessions, programName, expanded, o
                       {warmup && <span style={{ color: COLORS.textFaint, fontWeight: 400, fontSize: 11 }}> — temps en secondes</span>}
                       {gainage && <span style={{ color: COLORS.textFaint, fontWeight: 400, fontSize: 11 }}> — temps d'effort en secondes</span>}
                     </div>
+                    {ex && (() => {
+                      const exNiveaux = getExerciseNiveaux(ex, null);
+                      const selectedNiveau = exNiveaux[(niveauxParExercice[exId] || 1) - 1];
+                      const nivHasConsignes = selectedNiveau && selectedNiveau.consignes && CONSIGNE_FIELDS.some((f) => (selectedNiveau.consignes[f.key] || "").trim());
+                      const nivHasVideo = selectedNiveau && selectedNiveau.videoUrl;
+                      return (
+                        <div style={{ marginBottom: 8 }}>
+                          <div style={{ display: "flex", gap: 3, flexWrap: "wrap", alignItems: "center" }}>
+                            {exNiveaux.map((niv, idx) => {
+                              const lvl = idx + 1;
+                              const isActive = (niveauxParExercice[exId] || 1) === lvl;
+                              return (
+                                <button
+                                  key={lvl}
+                                  type="button"
+                                  onClick={() => {
+                                    setNiveauxParExercice((p) => ({ ...p, [exId]: lvl }));
+                                    setNiveauxDirty(true);
+                                  }}
+                                  title={niv.nom}
+                                  style={{
+                                    fontSize: 10,
+                                    padding: "3px 8px",
+                                    borderRadius: 12,
+                                    border: `1px solid ${isActive ? COLORS.accent : COLORS.cardBorder}`,
+                                    background: isActive ? COLORS.accent : COLORS.bg2,
+                                    color: isActive ? COLORS.bg : COLORS.textDim,
+                                    fontWeight: isActive ? 700 : 400,
+                                    cursor: "pointer",
+                                    fontFamily: FONT_BODY,
+                                  }}
+                                >
+                                  {niv.nom}
+                                </button>
+                              );
+                            })}
+                            {nivHasConsignes && (
+                              <button
+                                type="button"
+                                style={{ ...styles.infoBtn, ...styles.infoBtnConsignes, ...(openNiveauConsignes[exId] ? styles.infoBtnActive : {}) }}
+                                onClick={() => setOpenNiveauConsignes((p) => ({ ...p, [exId]: !p[exId] }))}
+                              >
+                                ℹ️
+                              </button>
+                            )}
+                            {nivHasVideo && (
+                              <button
+                                type="button"
+                                style={{ ...styles.infoBtn, ...styles.infoBtnVideo, ...(openNiveauVideo[exId] ? styles.infoBtnActive : {}) }}
+                                onClick={() => setOpenNiveauVideo((p) => ({ ...p, [exId]: !p[exId] }))}
+                              >
+                                ▶️
+                              </button>
+                            )}
+                          </div>
+                          {openNiveauConsignes[exId] && nivHasConsignes && (
+                            <ConsignesPanel ex={{ consignes: selectedNiveau.consignes }} />
+                          )}
+                          {openNiveauVideo[exId] && nivHasVideo && (
+                            <VideoPanel url={selectedNiveau.videoUrl} />
+                          )}
+                        </div>
+                      );
+                    })()}
                     {(mobility || endSession) ? (
                       (showConsignesBtn || showVideoBtn) && (
                         <div style={styles.entryRow}>
@@ -1911,6 +2134,26 @@ function SessionCard({ session, exercises, allSessions, programName, expanded, o
                       <React.Fragment key={row._idx}>
                       <div style={styles.entryRow}>
                         <span style={styles.entryLabel}>Set {row.serie}</span>
+                        <button
+                          type="button"
+                          onClick={() => removeSerie(exId, row.serie)}
+                          title="Retirer cette série"
+                          aria-label="Retirer cette série"
+                          style={{
+                            width: 20,
+                            height: 20,
+                            borderRadius: 5,
+                            border: `1px solid ${COLORS.cardBorder}`,
+                            background: COLORS.bg2,
+                            color: COLORS.textFaint,
+                            fontSize: 10,
+                            cursor: "pointer",
+                            flexShrink: 0,
+                            padding: 0,
+                          }}
+                        >
+                          ✕
+                        </button>
                         <input
                           type="number"
                           value={row.reps ?? ""}
@@ -1985,6 +2228,13 @@ function SessionCard({ session, exercises, allSessions, programName, expanded, o
                       </React.Fragment>
                       );
                     })}
+                    <button
+                      type="button"
+                      style={{ ...styles.linkBtn, fontSize: 11, marginTop: 2 }}
+                      onClick={() => addSerie(exId)}
+                    >
+                      + Ajouter une série
+                    </button>
                     </>
                     )}
                     {openConsignes[exId] && ex && <ConsignesPanel ex={ex} />}
@@ -2000,13 +2250,14 @@ function SessionCard({ session, exercises, allSessions, programName, expanded, o
           <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8, gap: 10 }}>
             <button style={styles.dangerLinkBtn} onClick={() => setConfirmDelete(true)}>Supprimer la séance</button>
             <button
-              style={{ ...styles.primaryBtn, opacity: (dirty || bilanDirty || bilanAvantDirty) ? 1 : 0.5 }}
-              disabled={!dirty && !bilanDirty && !bilanAvantDirty}
+              style={{ ...styles.primaryBtn, opacity: (dirty || bilanDirty || bilanAvantDirty || niveauxDirty) ? 1 : 0.5 }}
+              disabled={!dirty && !bilanDirty && !bilanAvantDirty && !niveauxDirty}
               onClick={() => {
-                onSave({ entries: local, bilan, bilanAvant });
+                onSave({ entries: local, bilan, bilanAvant, niveaux: niveauxParExercice });
                 setDirty(false);
                 setBilanDirty(false);
                 setBilanAvantDirty(false);
+                setNiveauxDirty(false);
               }}
             >
               Enregistrer les modifications
@@ -2154,23 +2405,42 @@ function SessionBilanForm({ bilan, onChange }) {
 function NewSessionForm({ data, onCancel, onSave }) {
   const [date, setDate] = useState(todayISO());
   const [seanceTypeId, setSeanceTypeId] = useState("");
-  const [selectedExIds, setSelectedExIds] = useState([]);
+  const [selectedKeys, setSelectedKeys] = useState([]);
+  const [niveauxByKey, setNiveauxByKey] = useState({});
+  const exercisesMap = exMap(data);
 
   const applyTemplate = (stId) => {
     setSeanceTypeId(stId);
     const st = data.seanceTypes.find((s) => s.id === stId);
-    if (st) setSelectedExIds(st.exerciceIds);
+    if (st) {
+      const keys = st.exerciceIds.map((exId) => {
+        const ex = exercisesMap[exId];
+        return selKey(exId, zoneLabel(getExerciseZones(ex)[0]));
+      });
+      setSelectedKeys(keys);
+      const niv = {};
+      keys.forEach((k, i) => {
+        const exId = st.exerciceIds[i];
+        if (st.niveaux && st.niveaux[exId] != null) niv[k] = st.niveaux[exId];
+      });
+      setNiveauxByKey(niv);
+    }
   };
 
-  const toggleEx = (exId) => {
-    setSelectedExIds((prev) => (prev.includes(exId) ? prev.filter((x) => x !== exId) : [...prev, exId]));
+  const toggleKey = (key) => {
+    setSelectedKeys((prev) => (prev.includes(key) ? prev.filter((x) => x !== key) : [...prev, key]));
+  };
+
+  const selectNiveau = (key, lvl) => {
+    setNiveauxByKey((prev) => ({ ...prev, [key]: lvl }));
   };
 
   const save = () => {
-    if (!date || selectedExIds.length === 0) return;
-    const entries = makeEntries(selectedExIds, exMap(data));
+    if (!date || selectedKeys.length === 0) return;
+    const { exerciceIds, niveaux } = finalizeSelection(selectedKeys, niveauxByKey, exercisesMap);
+    const entries = makeEntries(exerciceIds, exercisesMap);
     const st = data.seanceTypes.find((s) => s.id === seanceTypeId);
-    onSave({ id: uid("se"), date, seanceNom: st ? st.nom : null, entries });
+    onSave({ id: uid("se"), date, seanceNom: st ? st.nom : null, entries, niveaux });
   };
 
   return (
@@ -2188,8 +2458,11 @@ function NewSessionForm({ data, onCancel, onSave }) {
       </select>
 
       <label style={styles.fieldLabel}>Exercices de la séance</label>
+      <p style={{ fontSize: 11, color: COLORS.textFaint, marginTop: -4, marginBottom: 8 }}>
+        Un exercice présent dans plusieurs catégories peut être coché indépendamment dans chacune, avec son propre niveau.
+      </p>
       <div style={styles.checklist}>
-        {groupExIdsByZone(data.exercises.map((e) => e.id), exMap(data)).map(([label, ids]) => (
+        {groupExIdsByZoneMulti(data.exercises.map((e) => e.id), exercisesMap).map(([label, ids]) => (
           <div key={label} style={{ marginBottom: 10 }}>
             <div style={{ fontSize: 10, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, margin: "6px 0 4px" }}>
               {label}
@@ -2197,15 +2470,26 @@ function NewSessionForm({ data, onCancel, onSave }) {
             {ids.map((exId) => {
               const ex = data.exercises.find((e) => e.id === exId);
               if (!ex) return null;
+              const key = selKey(exId, label);
+              const isChecked = selectedKeys.includes(key);
               return (
-                <label key={ex.id} style={styles.checkItem}>
-                  <input
-                    type="checkbox"
-                    checked={selectedExIds.includes(ex.id)}
-                    onChange={() => toggleEx(ex.id)}
-                  />
-                  <span style={{ marginLeft: 8 }}>{exDisplayName(ex)}</span>
-                </label>
+                <div key={key} style={{ marginBottom: 4 }}>
+                  <label style={styles.checkItem}>
+                    <input
+                      type="checkbox"
+                      checked={isChecked}
+                      onChange={() => toggleKey(key)}
+                    />
+                    <span style={{ marginLeft: 8 }}>{exDisplayName(ex)}</span>
+                  </label>
+                  {isChecked && (
+                    <LevelPickerButtons
+                      exercise={ex}
+                      selected={niveauxByKey[key]}
+                      onSelect={(lvl) => selectNiveau(key, lvl)}
+                    />
+                  )}
+                </div>
               );
             })}
           </div>
@@ -2214,7 +2498,7 @@ function NewSessionForm({ data, onCancel, onSave }) {
 
       <div style={{ display: "flex", gap: 10, marginTop: 14, justifyContent: "flex-end" }}>
         <button style={styles.secondaryBtn} onClick={onCancel}>Annuler</button>
-        <button style={styles.primaryBtn} onClick={save} disabled={selectedExIds.length === 0}>
+        <button style={styles.primaryBtn} onClick={save} disabled={selectedKeys.length === 0}>
           Créer la séance
         </button>
       </div>
@@ -2347,35 +2631,73 @@ function getAlimentationSections(mealTime) {
   ];
 }
 
-function CTView({ data, activeClient }) {
-  const [selectedIds, setSelectedIds] = useState([]);
+function CTView({ data, activeClient, clientId, role, persistLibrary }) {
+  const [mode, setMode] = useState("chrono");
+  const [selectedKeys, setSelectedKeys] = useState([]);
+  const [niveauxByKey, setNiveauxByKey] = useState({});
   const [loadedSettings, setLoadedSettings] = useState({
     work: WARMUP_WORK_SECONDS,
     rest: WARMUP_REST_SECONDS,
     roundRest: WARMUP_ROUND_REST_SECONDS,
-    rounds: 2,
+    rounds: 5,
   });
   const exercisesMap = exMap(data);
-  const toggle = (id) => setSelectedIds((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
-  const names = selectedIds.map((id) => (exercisesMap[id] ? exercisesMap[id].nom.replace(/\n/g, " ") : "Exercice"));
+  const toggleKey = (key) => setSelectedKeys((p) => (p.includes(key) ? p.filter((x) => x !== key) : [...p, key]));
+  const { exerciceIds: selectedIds, niveaux: resolvedNiveaux } = finalizeSelection(selectedKeys, niveauxByKey, exercisesMap);
+  const names = selectedIds.map((id) => {
+    const ex = exercisesMap[id];
+    if (!ex) return "Exercice";
+    const niv = getExerciseNiveaux(ex, null)[(resolvedNiveaux[id] || 1) - 1];
+    return niv ? `${ex.nom.replace(/\n/g, " ")} — ${niv.nom}` : ex.nom.replace(/\n/g, " ");
+  });
 
   const assignedCtProgram = activeClient ? data.ctPrograms.find((p) => p.id === activeClient.ctProgramId) : null;
   const ctMap = {};
   data.ctTypes.forEach((c) => (ctMap[c.id] = c));
 
   const loadCTType = (ct) => {
-    setSelectedIds(ct.exerciceIds);
+    const keys = ct.exerciceIds.map((exId) => {
+      const ex = exercisesMap[exId];
+      return selKey(exId, zoneLabel(getExerciseZones(ex)[0]));
+    });
+    setSelectedKeys(keys);
+    const niv = {};
+    keys.forEach((k, i) => {
+      const exId = ct.exerciceIds[i];
+      if (ct.niveaux && ct.niveaux[exId] != null) niv[k] = ct.niveaux[exId];
+    });
+    setNiveauxByKey(niv);
     setLoadedSettings({
       work: ct.workSeconds ?? WARMUP_WORK_SECONDS,
       rest: ct.restSeconds ?? WARMUP_REST_SECONDS,
       roundRest: ct.roundRestSeconds ?? WARMUP_ROUND_REST_SECONDS,
-      rounds: ct.rounds ?? 2,
+      rounds: ct.rounds ?? 5,
     });
   };
 
   return (
     <div>
       <h2 style={styles.h2}>Circuit training</h2>
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+        <button
+          style={{ ...styles.secondaryBtn, ...(mode === "chrono" ? { background: COLORS.accent, color: COLORS.bg, borderColor: COLORS.accent } : {}) }}
+          onClick={() => setMode("chrono")}
+        >
+          ⏱️ Chrono
+        </button>
+        <button
+          style={{ ...styles.secondaryBtn, ...(mode === "tableau" ? { background: COLORS.accent, color: COLORS.bg, borderColor: COLORS.accent } : {}) }}
+          onClick={() => setMode("tableau")}
+        >
+          📋 Tableau
+        </button>
+      </div>
+
+      {mode === "tableau" ? (
+        <CTTableView clientId={clientId} role={role} data={data} persistLibrary={persistLibrary} />
+      ) : (
+      <>
       <p style={{ color: COLORS.textDim, fontSize: 13, marginBottom: 16 }}>
         Choisis les exercices du circuit, puis lance le chrono. Même principe que le circuit d'échauffement : temps d'effort, repos entre exercices, repos entre tours.
       </p>
@@ -2421,18 +2743,29 @@ function CTView({ data, activeClient }) {
       )}
 
       <div style={styles.checklist}>
-        {groupExIdsByZone(data.exercises.map((e) => e.id), exercisesMap).map(([label, ids]) => (
+        {groupExIdsByZoneMulti(data.exercises.map((e) => e.id), exercisesMap).map(([label, ids]) => (
           <div key={label} style={{ marginBottom: 10 }}>
             <div style={{ fontSize: 10, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, margin: "6px 0 4px" }}>
               {label}
             </div>
             {ids.map((exId) => {
               const ex = exercisesMap[exId];
+              const key = selKey(exId, label);
+              const isChecked = selectedKeys.includes(key);
               return (
-                <label key={exId} style={styles.checkItem}>
-                  <input type="checkbox" checked={selectedIds.includes(exId)} onChange={() => toggle(exId)} />
-                  <span style={{ marginLeft: 8 }}>{exDisplayName(ex)}</span>
-                </label>
+                <div key={key} style={{ marginBottom: 4 }}>
+                  <label style={styles.checkItem}>
+                    <input type="checkbox" checked={isChecked} onChange={() => toggleKey(key)} />
+                    <span style={{ marginLeft: 8 }}>{exDisplayName(ex)}</span>
+                  </label>
+                  {isChecked && (
+                    <LevelPickerButtons
+                      exercise={ex}
+                      selected={niveauxByKey[key]}
+                      onSelect={(lvl) => setNiveauxByKey((p) => ({ ...p, [key]: lvl }))}
+                    />
+                  )}
+                </div>
               );
             })}
           </div>
@@ -2454,6 +2787,495 @@ function CTView({ data, activeClient }) {
       ) : (
         <div style={styles.emptyState}>Sélectionne au moins un exercice pour démarrer le circuit.</div>
       )}
+      </>
+      )}
+    </div>
+  );
+}
+
+const ctTableKey = (clientId) => `ct-table-v1-${clientId}`;
+const ctTableDraftKey = (clientId) => `ct-table-draft-v1-${clientId}`;
+
+function CTTableGridEditor({ data, rows, setRows, rounds, setRounds, levelNames, showPoids = true, isCoach = true, showHeaderControls = true }) {
+  const exercisesMap = exMap(data);
+  const groupeOptions = [...new Set(data.exercises.flatMap((e) => getExerciseGroupes(e)))].sort();
+  const exercisesForGroupe = (groupe) =>
+    groupe ? data.exercises.filter((e) => getExerciseGroupes(e).includes(groupe)) : data.exercises;
+  const [openCellConsignes, setOpenCellConsignes] = useState({});
+  const [openCellVideo, setOpenCellVideo] = useState({});
+
+  const setRoundCount = (n) => {
+    const newRounds = Math.max(1, Math.min(10, n));
+    setRounds(newRounds);
+    setRows((prev) =>
+      prev.map((row) => {
+        const cells = row.cells.slice(0, newRounds);
+        while (cells.length < newRounds) cells.push({ exerciceId: "", poids: "" });
+        return { ...row, cells };
+      })
+    );
+  };
+
+  const addRow = () => {
+    setRows((prev) => [
+      ...prev,
+      { id: uid("ctrow"), groupe: "", cells: Array.from({ length: rounds }, () => ({ exerciceId: "", poids: "" })) },
+    ]);
+  };
+
+  const removeRow = (rowId) => setRows((prev) => prev.filter((r) => r.id !== rowId));
+
+  const updateRowGroupe = (rowId, groupe) =>
+    setRows((prev) => prev.map((r) => (r.id === rowId ? { ...r, groupe } : r)));
+
+  const updateCell = (rowId, cellIdx, field, value) =>
+    setRows((prev) =>
+      prev.map((r) =>
+        r.id === rowId
+          ? { ...r, cells: r.cells.map((c, i) => (i === cellIdx ? { ...c, [field]: value } : c)) }
+          : r
+      )
+    );
+
+  return (
+    <div>
+      {isCoach && showHeaderControls && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+          <label style={{ fontSize: 13, color: COLORS.textDim }}>Nombre de tours (CT)</label>
+          <input
+            type="number"
+            min={1}
+            max={10}
+            value={rounds}
+            onFocus={(e) => e.target.select()}
+            onChange={(e) => setRoundCount(Number(e.target.value) || 1)}
+            style={{ ...styles.numInput, width: 56 }}
+          />
+          <button style={styles.secondaryBtn} onClick={addRow}>+ Ajouter un exercice</button>
+        </div>
+      )}
+
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ ...styles.table, minWidth: 180 + rounds * 170 }}>
+          <thead>
+            <tr>
+              <th style={styles.th}>Exercice</th>
+              {Array.from({ length: rounds }, (_, i) => (
+                <th key={i} style={{ ...styles.th, textAlign: "center" }}>CT {i + 1}</th>
+              ))}
+              {isCoach && <th style={styles.th}></th>}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.id}>
+                <td style={{ ...styles.td, minWidth: 150 }}>
+                  {isCoach ? (
+                    <select
+                      style={{ ...styles.textInput, marginBottom: 0, fontSize: 13, fontWeight: 600 }}
+                      value={row.groupe}
+                      onChange={(e) => updateRowGroupe(row.id, e.target.value)}
+                    >
+                      <option value="">— Groupe musculaire —</option>
+                      {groupeOptions.map((g) => (
+                        <option key={g} value={g}>{g}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <span style={{ fontWeight: 600 }}>{row.groupe || "—"}</span>
+                  )}
+                </td>
+                {row.cells.map((cell, i) => {
+                  const options = exercisesForGroupe(row.groupe);
+                  const cellLevelNames = getExerciseNiveaux(exercisesMap[cell.exerciceId], levelNames);
+                  const selectedLevel = cellLevelNames[(cell.niveau || 1) - 1];
+                  const exName = cell.exerciceId
+                    ? `${exDisplayName(exercisesMap[cell.exerciceId])} — ${selectedLevel ? selectedLevel.nom : ""}`
+                    : cell.exercice || "";
+                  const cellKey = `${row.id}_${i}`;
+                  const levelHasConsignes = selectedLevel && selectedLevel.consignes && CONSIGNE_FIELDS.some((f) => (selectedLevel.consignes[f.key] || "").trim());
+                  const levelHasVideo = selectedLevel && selectedLevel.videoUrl;
+                  return (
+                  <td key={i} style={{ ...styles.td, minWidth: 160 }}>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      {isCoach ? (
+                        <>
+                          <select
+                            style={{ ...styles.textInput, marginBottom: 0, fontSize: 12 }}
+                            value={cell.exerciceId || ""}
+                            onChange={(e) => updateCell(row.id, i, "exerciceId", e.target.value)}
+                          >
+                            <option value="">— Exercice —</option>
+                            {options.map((ex) => (
+                              <option key={ex.id} value={ex.id}>{exDisplayName(ex)}</option>
+                            ))}
+                          </select>
+                          {cell.exerciceId && (
+                            <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>
+                              {cellLevelNames.map((_, idx) => {
+                                const lvl = idx + 1;
+                                const isActive = (cell.niveau || 1) === lvl;
+                                return (
+                                  <button
+                                    key={lvl}
+                                    type="button"
+                                    onClick={() => updateCell(row.id, i, "niveau", lvl)}
+                                    style={{
+                                      width: 22,
+                                      height: 22,
+                                      borderRadius: 6,
+                                      border: `1px solid ${isActive ? COLORS.accent : COLORS.cardBorder}`,
+                                      background: isActive ? COLORS.accent : COLORS.bg2,
+                                      color: isActive ? COLORS.bg : COLORS.textDim,
+                                      fontSize: 11,
+                                      fontWeight: 700,
+                                      cursor: "pointer",
+                                      fontFamily: FONT_BODY,
+                                      padding: 0,
+                                    }}
+                                    title={cellLevelNames[lvl - 1].nom}
+                                  >
+                                    {lvl}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+                          {cell.exerciceId && selectedLevel && (
+                            <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
+                              <span style={{ fontSize: 10, color: COLORS.accent2 }}>{selectedLevel.nom}</span>
+                              {levelHasConsignes && (
+                                <button
+                                  type="button"
+                                  style={{ ...styles.infoBtn, ...styles.infoBtnConsignes, ...(openCellConsignes[cellKey] ? styles.infoBtnActive : {}), padding: "3px 6px", fontSize: 10 }}
+                                  onClick={() => setOpenCellConsignes((p) => ({ ...p, [cellKey]: !p[cellKey] }))}
+                                >
+                                  ℹ️
+                                </button>
+                              )}
+                              {levelHasVideo && (
+                                <button
+                                  type="button"
+                                  style={{ ...styles.infoBtn, ...styles.infoBtnVideo, ...(openCellVideo[cellKey] ? styles.infoBtnActive : {}), padding: "3px 6px", fontSize: 10 }}
+                                  onClick={() => setOpenCellVideo((p) => ({ ...p, [cellKey]: !p[cellKey] }))}
+                                >
+                                  ▶️
+                                </button>
+                              )}
+                            </div>
+                          )}
+                          {openCellConsignes[cellKey] && selectedLevel && levelHasConsignes && (
+                            <ConsignesPanel ex={{ consignes: selectedLevel.consignes }} />
+                          )}
+                          {openCellVideo[cellKey] && selectedLevel && levelHasVideo && (
+                            <VideoPanel url={selectedLevel.videoUrl} />
+                          )}
+                        </>
+                      ) : (
+                        <span style={{ fontSize: 12, color: COLORS.textDim }}>{exName || "—"}</span>
+                      )}
+                      {showPoids && (
+                        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                          <input
+                            type="number"
+                            style={{ ...styles.numInput, width: 60 }}
+                            value={cell.poids}
+                            onFocus={(e) => e.target.select()}
+                            onChange={(e) => updateCell(row.id, i, "poids", e.target.value)}
+                            placeholder="Kg"
+                          />
+                          <span style={styles.unitLabel}>kg</span>
+                        </div>
+                      )}
+                    </div>
+                  </td>
+                  );
+                })}
+                {isCoach && (
+                  <td style={styles.td}>
+                    <button style={styles.trashBtn} onClick={() => removeRow(row.id)} title="Supprimer cet exercice" aria-label="Supprimer cet exercice">🗑️</button>
+                  </td>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function CTTableView({ clientId, role, data, persistLibrary }) {
+  const isCoach = role === "coach";
+  const [rounds, setRounds] = useState(5);
+  const [rows, setRows] = useState([
+    { id: uid("ctrow"), groupe: "", cells: Array.from({ length: 5 }, () => ({ exerciceId: "", poids: "" })) },
+  ]);
+  const [draftLoaded, setDraftLoaded] = useState(false);
+  const [history, setHistory] = useState(null);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [editingLevels, setEditingLevels] = useState(false);
+  const [levelNamesInput, setLevelNamesInput] = useState(null);
+  const [timerWorkSeconds, setTimerWorkSeconds] = useState(WARMUP_WORK_SECONDS);
+  const [timerRestSeconds, setTimerRestSeconds] = useState(WARMUP_REST_SECONDS);
+  const [timerRoundRestSeconds, setTimerRoundRestSeconds] = useState(WARMUP_ROUND_REST_SECONDS);
+  const [showTimer, setShowTimer] = useState(false);
+
+  const levelNames = data.ctLevelNames && data.ctLevelNames.length
+    ? data.ctLevelNames
+    : ["Niveau 1", "Niveau 2", "Niveau 3", "Niveau 4", "Niveau 5"];
+
+  const startEditLevels = () => {
+    setLevelNamesInput([...levelNames]);
+    setEditingLevels(true);
+  };
+
+  const saveLevelNames = () => {
+    const cleaned = levelNamesInput.map((n, i) => n.trim() || `Niveau ${i + 1}`);
+    persistLibrary({
+      exercises: data.exercises,
+      seanceTypes: data.seanceTypes,
+      programs: data.programs,
+      ctTypes: data.ctTypes,
+      ctPrograms: data.ctPrograms,
+      alimentationVideos: data.alimentationVideos,
+      ctLevelNames: cleaned,
+    });
+    setEditingLevels(false);
+  };
+
+  const exercisesMap = exMap(data);
+  const modelesAvecTableau = data.ctTypes.filter((ct) => ct.table && Array.isArray(ct.table.rows));
+
+  const loadFromModele = (ct) => {
+    setRounds(ct.table.rounds);
+    setRows(ct.table.rows.map((r) => ({ ...r, id: uid("ctrow"), cells: r.cells.map((c) => ({ ...c, poids: "" })) })));
+  };
+
+  useEffect(() => {
+    if (!clientId) return;
+    setHistoryLoaded(false);
+    (async () => {
+      let h = null;
+      try {
+        const r = await window.storage.get(ctTableKey(clientId), true);
+        if (r && r.value) h = JSON.parse(r.value);
+      } catch (e) {}
+      setHistory(h || []);
+      setHistoryLoaded(true);
+    })();
+  }, [clientId]);
+
+  useEffect(() => {
+    if (!clientId) return;
+    setDraftLoaded(false);
+    (async () => {
+      let d = null;
+      try {
+        const r = await window.storage.get(ctTableDraftKey(clientId), true);
+        if (r && r.value) d = JSON.parse(r.value);
+      } catch (e) {}
+      if (d && d.rows) {
+        setRounds(d.rounds || 5);
+        setRows(d.rows);
+      }
+      setDraftLoaded(true);
+    })();
+  }, [clientId]);
+
+  useEffect(() => {
+    if (!clientId || !draftLoaded) return;
+    const id = setTimeout(() => {
+      window.storage.set(ctTableDraftKey(clientId), JSON.stringify({ rounds, rows }), true).catch(() => {});
+    }, 500);
+    return () => clearTimeout(id);
+  }, [clientId, draftLoaded, rounds, rows]);
+
+  const validateSession = async () => {
+    setSaving(true);
+    const entry = { id: uid("ctsession"), date: todayISO(), rounds, rows };
+    const newHistory = [entry, ...(history || [])];
+    setHistory(newHistory);
+    try { await window.storage.set(ctTableKey(clientId), JSON.stringify(newHistory), true); } catch (e) {}
+    setSaving(false);
+  };
+
+  const deleteHistoryEntry = async (entryId) => {
+    const newHistory = (history || []).filter((h) => h.id !== entryId);
+    setHistory(newHistory);
+    try { await window.storage.set(ctTableKey(clientId), JSON.stringify(newHistory), true); } catch (e) {}
+  };
+
+  return (
+    <div>
+      <p style={{ color: COLORS.textDim, fontSize: 13, marginBottom: 14 }}>
+        Chaque ligne est un exercice (choisis son groupe musculaire), chaque colonne un tour. L'exercice choisi peut évoluer à chaque tour ; note le poids utilisé dans chaque case.
+      </p>
+
+      {isCoach && modelesAvecTableau.length > 0 && (
+        <div style={{ ...styles.card, marginBottom: 14 }}>
+          <div style={{ fontSize: 11, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 10 }}>
+            Modèles de tableau enregistrés (créés depuis Séances)
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {modelesAvecTableau.map((ct) => (
+              <button key={ct.id} style={styles.secondaryBtn} onClick={() => loadFromModele(ct)}>
+                {ct.nom}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {isCoach && (
+        <div style={{ marginBottom: 14 }}>
+          <button style={styles.linkBtn} onClick={startEditLevels}>Renommer les niveaux par défaut</button>
+        </div>
+      )}
+
+      {isCoach && editingLevels && (
+        <div style={{ ...styles.card, marginBottom: 14 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: COLORS.text, marginBottom: 4 }}>Niveaux par défaut</div>
+          <div style={{ fontSize: 11, color: COLORS.textFaint, marginBottom: 10 }}>
+            Utilisés uniquement pour les exercices sans niveaux personnalisés (réglables dans la fiche de chaque exercice).
+          </div>
+          <ExerciseLevelsFields niveaux={levelNamesInput} onChange={setLevelNamesInput} />
+          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+            <button style={styles.secondaryBtn} onClick={() => setEditingLevels(false)}>Annuler</button>
+            <button style={styles.primaryBtn} onClick={saveLevelNames}>Enregistrer</button>
+          </div>
+        </div>
+      )}
+
+      <CTTableGridEditor
+        data={data}
+        rows={rows}
+        setRows={setRows}
+        rounds={rounds}
+        setRounds={setRounds}
+        levelNames={levelNames}
+        showPoids={true}
+        isCoach={isCoach}
+      />
+
+      {isCoach && (
+        <div style={{ ...styles.card, marginTop: 16 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: COLORS.text, marginBottom: 10 }}>⏱️ Chrono synchronisé avec le tableau</div>
+          <p style={{ fontSize: 12, color: COLORS.textDim, marginTop: -4, marginBottom: 10 }}>
+            {rows.filter((r) => r.cells.some((c) => c.exerciceId)).length} exercice(s) × {rounds} tour(s) = un chrono qui enchaîne automatiquement chaque exercice, dans l'ordre du tableau, tour après tour.
+          </p>
+          <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 12 }}>
+            <div>
+              <label style={{ fontSize: 12, color: COLORS.textDim, display: "block", marginBottom: 4 }}>Effort (s)</label>
+              <input
+                type="number"
+                min={5}
+                max={600}
+                value={timerWorkSeconds}
+                onFocus={(e) => e.target.select()}
+                onChange={(e) => setTimerWorkSeconds(Math.max(5, Number(e.target.value) || WARMUP_WORK_SECONDS))}
+                style={{ ...styles.numInput, width: 64 }}
+              />
+            </div>
+            <div>
+              <label style={{ fontSize: 12, color: COLORS.textDim, display: "block", marginBottom: 4 }}>Repos entre exercices (s)</label>
+              <input
+                type="number"
+                min={5}
+                max={600}
+                value={timerRestSeconds}
+                onFocus={(e) => e.target.select()}
+                onChange={(e) => setTimerRestSeconds(Math.max(5, Number(e.target.value) || WARMUP_REST_SECONDS))}
+                style={{ ...styles.numInput, width: 64 }}
+              />
+            </div>
+            <div>
+              <label style={{ fontSize: 12, color: COLORS.textDim, display: "block", marginBottom: 4 }}>Repos entre tours (s)</label>
+              <input
+                type="number"
+                min={5}
+                max={600}
+                value={timerRoundRestSeconds}
+                onFocus={(e) => e.target.select()}
+                onChange={(e) => setTimerRoundRestSeconds(Math.max(5, Number(e.target.value) || WARMUP_ROUND_REST_SECONDS))}
+                style={{ ...styles.numInput, width: 64 }}
+              />
+            </div>
+          </div>
+          {!showTimer ? (
+            <button style={styles.primaryBtn} onClick={() => setShowTimer(true)}>▶️ Démarrer le chrono synchronisé</button>
+          ) : (
+            <CircuitTimer
+              key={JSON.stringify(rows) + rounds + timerWorkSeconds + timerRestSeconds + timerRoundRestSeconds}
+              title="Circuit CT synchronisé"
+              exerciseNames={[]}
+              customPhases={buildCTTablePhases(rows, rounds, timerWorkSeconds, timerRestSeconds, timerRoundRestSeconds, exercisesMap, levelNames)}
+              customSummary={`${rows.filter((r) => r.cells.some((c) => c.exerciceId)).length} exercice(s) × ${rounds} tour(s) · ${timerWorkSeconds}s d'effort / ${timerRestSeconds}s de repos / ${timerRoundRestSeconds}s entre les tours`}
+            />
+          )}
+        </div>
+      )}
+
+      <div style={{ marginTop: 14 }}>
+        <button style={{ ...styles.primaryBtn, opacity: saving ? 0.6 : 1 }} onClick={validateSession} disabled={saving}>
+          {saving ? "Enregistrement…" : "✓ Valider la séance"}
+        </button>
+      </div>
+
+      <div style={{ marginTop: 28 }}>
+        <div style={styles.sectionHeader}>Historique des séances CT</div>
+        {!historyLoaded ? (
+          <div style={{ ...styles.emptyState, padding: "20px 0" }}>Chargement…</div>
+        ) : history.length === 0 ? (
+          <div style={{ ...styles.emptyState, padding: "20px 0" }}>Aucune séance CT validée pour l'instant.</div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {history.map((entry) => (
+              <div key={entry.id} style={styles.card}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                  <div style={{ fontFamily: FONT_DISPLAY, fontSize: 14, color: COLORS.text }}>{formatDateFR(entry.date)}</div>
+                  {isCoach && (
+                    <button style={styles.dangerLinkBtn} onClick={() => deleteHistoryEntry(entry.id)}>Supprimer</button>
+                  )}
+                </div>
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ ...styles.table, minWidth: 160 + entry.rounds * 150 }}>
+                    <thead>
+                      <tr>
+                        <th style={styles.th}>Exercice</th>
+                        {Array.from({ length: entry.rounds }, (_, i) => (
+                          <th key={i} style={{ ...styles.th, textAlign: "center" }}>CT {i + 1}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {entry.rows.map((row) => (
+                        <tr key={row.id}>
+                          <td style={{ ...styles.td, fontWeight: 600 }}>{row.groupe || row.label || "—"}</td>
+                          {row.cells.map((cell, i) => {
+                            const cellLevelNames = getExerciseNiveaux(exercisesMap[cell.exerciceId], levelNames);
+                            const histLevel = cellLevelNames[(cell.niveau || 1) - 1];
+                            const exName = cell.exerciceId
+                              ? `${exDisplayName(exercisesMap[cell.exerciceId])} — ${histLevel ? histLevel.nom : ""}`
+                              : cell.exercice || "";
+                            return (
+                            <td key={i} style={styles.td}>
+                              <div style={{ fontSize: 12, color: COLORS.textDim }}>{exName || "—"}</div>
+                              <div style={{ fontSize: 13, color: COLORS.accent2, fontWeight: 600 }}>{cell.poids ? `${cell.poids} kg` : "—"}</div>
+                            </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -3296,8 +4118,10 @@ function ProgressionView({ data }) {
   const zones = useMemo(() => {
     const seen = [];
     data.exercises.forEach((e) => {
-      const label = zoneLabel(e.zone);
-      if (!seen.includes(label)) seen.push(label);
+      getExerciseZones(e).forEach((z) => {
+        const label = zoneLabel(z);
+        if (!seen.includes(label)) seen.push(label);
+      });
     });
     const rank = (label) => {
       if (label === "Mobilité") return 0;
@@ -3310,14 +4134,14 @@ function ProgressionView({ data }) {
 
   const [zone, setZone] = useState(zones[0] || "");
   const exercisesInZone = useMemo(
-    () => data.exercises.filter((e) => zoneLabel(e.zone) === zone),
+    () => data.exercises.filter((e) => getExerciseZones(e).some((z) => zoneLabel(z) === zone)),
     [data.exercises, zone]
   );
   const [exId, setExId] = useState(exercisesInZone[0]?.id || "");
 
   const changeZone = (newZone) => {
     setZone(newZone);
-    const first = data.exercises.find((e) => zoneLabel(e.zone) === newZone);
+    const first = data.exercises.find((e) => getExerciseZones(e).some((z) => zoneLabel(z) === newZone));
     setExId(first ? first.id : "");
   };
 
@@ -3450,7 +4274,7 @@ function ProgrammesView({ data, persistLibrary, role, activeClient, assignProgra
 
   const addProgram = (pr) => {
     const newLib = { ...data, programs: [...data.programs, { id: uid("pr"), ...pr }] };
-    persistLibrary({ exercises: newLib.exercises, seanceTypes: newLib.seanceTypes, programs: newLib.programs, ctTypes: newLib.ctTypes, ctPrograms: newLib.ctPrograms, alimentationVideos: newLib.alimentationVideos });
+    persistLibrary({ exercises: newLib.exercises, seanceTypes: newLib.seanceTypes, programs: newLib.programs, ctTypes: newLib.ctTypes, ctPrograms: newLib.ctPrograms, alimentationVideos: newLib.alimentationVideos, ctLevelNames: newLib.ctLevelNames });
     setShowNewProgram(false);
   };
 
@@ -3459,13 +4283,13 @@ function ProgrammesView({ data, persistLibrary, role, activeClient, assignProgra
       ...data,
       programs: data.programs.map((p) => (p.id === programId ? { ...p, ...updates } : p)),
     };
-    persistLibrary({ exercises: newLib.exercises, seanceTypes: newLib.seanceTypes, programs: newLib.programs, ctTypes: newLib.ctTypes, ctPrograms: newLib.ctPrograms, alimentationVideos: newLib.alimentationVideos });
+    persistLibrary({ exercises: newLib.exercises, seanceTypes: newLib.seanceTypes, programs: newLib.programs, ctTypes: newLib.ctTypes, ctPrograms: newLib.ctPrograms, alimentationVideos: newLib.alimentationVideos, ctLevelNames: newLib.ctLevelNames });
     setEditingProgramId(null);
   };
 
   const addCTProgram = (pr) => {
     const newLib = { ...data, ctPrograms: [...data.ctPrograms, { id: uid("ctpr"), ...pr }] };
-    persistLibrary({ exercises: newLib.exercises, seanceTypes: newLib.seanceTypes, programs: newLib.programs, ctTypes: newLib.ctTypes, ctPrograms: newLib.ctPrograms, alimentationVideos: newLib.alimentationVideos });
+    persistLibrary({ exercises: newLib.exercises, seanceTypes: newLib.seanceTypes, programs: newLib.programs, ctTypes: newLib.ctTypes, ctPrograms: newLib.ctPrograms, alimentationVideos: newLib.alimentationVideos, ctLevelNames: newLib.ctLevelNames });
     setShowNewCTProgram(false);
   };
 
@@ -3474,7 +4298,7 @@ function ProgrammesView({ data, persistLibrary, role, activeClient, assignProgra
       ...data,
       ctPrograms: data.ctPrograms.map((p) => (p.id === programId ? { ...p, ...updates } : p)),
     };
-    persistLibrary({ exercises: newLib.exercises, seanceTypes: newLib.seanceTypes, programs: newLib.programs, ctTypes: newLib.ctTypes, ctPrograms: newLib.ctPrograms, alimentationVideos: newLib.alimentationVideos });
+    persistLibrary({ exercises: newLib.exercises, seanceTypes: newLib.seanceTypes, programs: newLib.programs, ctTypes: newLib.ctTypes, ctPrograms: newLib.ctPrograms, alimentationVideos: newLib.alimentationVideos, ctLevelNames: newLib.ctLevelNames });
     setEditingCTProgramId(null);
   };
 
@@ -3678,7 +4502,7 @@ function SeanceTypesView({ data, persistLibrary, role }) {
 
   const addSeanceType = (st) => {
     const newLib = { ...data, seanceTypes: [...data.seanceTypes, { id: uid("st"), ...st }] };
-    persistLibrary({ exercises: newLib.exercises, seanceTypes: newLib.seanceTypes, programs: newLib.programs, ctTypes: newLib.ctTypes, ctPrograms: newLib.ctPrograms, alimentationVideos: newLib.alimentationVideos });
+    persistLibrary({ exercises: newLib.exercises, seanceTypes: newLib.seanceTypes, programs: newLib.programs, ctTypes: newLib.ctTypes, ctPrograms: newLib.ctPrograms, alimentationVideos: newLib.alimentationVideos, ctLevelNames: newLib.ctLevelNames });
     setShowNewSeance(false);
   };
 
@@ -3687,13 +4511,13 @@ function SeanceTypesView({ data, persistLibrary, role }) {
       ...data,
       seanceTypes: data.seanceTypes.map((s) => (s.id === seanceTypeId ? { ...s, ...updates } : s)),
     };
-    persistLibrary({ exercises: newLib.exercises, seanceTypes: newLib.seanceTypes, programs: newLib.programs, ctTypes: newLib.ctTypes, ctPrograms: newLib.ctPrograms, alimentationVideos: newLib.alimentationVideos });
+    persistLibrary({ exercises: newLib.exercises, seanceTypes: newLib.seanceTypes, programs: newLib.programs, ctTypes: newLib.ctTypes, ctPrograms: newLib.ctPrograms, alimentationVideos: newLib.alimentationVideos, ctLevelNames: newLib.ctLevelNames });
     setEditingSeanceTypeId(null);
   };
 
   const addCTType = (ct) => {
     const newLib = { ...data, ctTypes: [...data.ctTypes, { id: uid("ctst"), ...ct }] };
-    persistLibrary({ exercises: newLib.exercises, seanceTypes: newLib.seanceTypes, programs: newLib.programs, ctTypes: newLib.ctTypes, ctPrograms: newLib.ctPrograms, alimentationVideos: newLib.alimentationVideos });
+    persistLibrary({ exercises: newLib.exercises, seanceTypes: newLib.seanceTypes, programs: newLib.programs, ctTypes: newLib.ctTypes, ctPrograms: newLib.ctPrograms, alimentationVideos: newLib.alimentationVideos, ctLevelNames: newLib.ctLevelNames });
     setShowNewCT(false);
   };
 
@@ -3702,7 +4526,7 @@ function SeanceTypesView({ data, persistLibrary, role }) {
       ...data,
       ctTypes: data.ctTypes.map((c) => (c.id === ctTypeId ? { ...c, ...updates } : c)),
     };
-    persistLibrary({ exercises: newLib.exercises, seanceTypes: newLib.seanceTypes, programs: newLib.programs, ctTypes: newLib.ctTypes, ctPrograms: newLib.ctPrograms, alimentationVideos: newLib.alimentationVideos });
+    persistLibrary({ exercises: newLib.exercises, seanceTypes: newLib.seanceTypes, programs: newLib.programs, ctTypes: newLib.ctTypes, ctPrograms: newLib.ctPrograms, alimentationVideos: newLib.alimentationVideos, ctLevelNames: newLib.ctLevelNames });
     setEditingCTTypeId(null);
   };
 
@@ -3882,7 +4706,7 @@ function ExercisesView({ data, persistLibrary, role }) {
 
   const addExercise = (ex) => {
     const newLib = { ...data, exercises: [...data.exercises, { id: uid("ex"), ...ex }] };
-    persistLibrary({ exercises: newLib.exercises, seanceTypes: newLib.seanceTypes, programs: newLib.programs, ctTypes: newLib.ctTypes, ctPrograms: newLib.ctPrograms, alimentationVideos: newLib.alimentationVideos });
+    persistLibrary({ exercises: newLib.exercises, seanceTypes: newLib.seanceTypes, programs: newLib.programs, ctTypes: newLib.ctTypes, ctPrograms: newLib.ctPrograms, alimentationVideos: newLib.alimentationVideos, ctLevelNames: newLib.ctLevelNames });
     setShowNewExercise(false);
   };
 
@@ -3891,7 +4715,7 @@ function ExercisesView({ data, persistLibrary, role }) {
       ...data,
       exercises: data.exercises.map((e) => (e.id === exId ? { ...e, ...updates } : e)),
     };
-    persistLibrary({ exercises: newLib.exercises, seanceTypes: newLib.seanceTypes, programs: newLib.programs, ctTypes: newLib.ctTypes, ctPrograms: newLib.ctPrograms, alimentationVideos: newLib.alimentationVideos });
+    persistLibrary({ exercises: newLib.exercises, seanceTypes: newLib.seanceTypes, programs: newLib.programs, ctTypes: newLib.ctTypes, ctPrograms: newLib.ctPrograms, alimentationVideos: newLib.alimentationVideos, ctLevelNames: newLib.ctLevelNames });
     setEditingExerciseId(null);
   };
 
@@ -3907,7 +4731,7 @@ function ExercisesView({ data, persistLibrary, role }) {
         <NewExerciseForm data={data} onCancel={() => setShowNewExercise(false)} onSave={addExercise} />
       )}
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        {groupExIdsByZone(data.exercises.map((e) => e.id), exMap(data)).map(([label, ids]) => (
+        {groupExIdsByZoneMulti(data.exercises.map((e) => e.id), exMap(data)).map(([label, ids]) => (
           <div key={label} style={styles.card}>
             <div style={{ fontSize: 11, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>
               {label}
@@ -4033,27 +4857,42 @@ function EditProgramForm({ data, program, onCancel, onSave }) {
 
 function NewSeanceTypeForm({ data, onCancel, onSave }) {
   const [nom, setNom] = useState("");
-  const [ids, setIds] = useState([]);
-  const toggle = (id) => setIds((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
+  const [selectedKeys, setSelectedKeys] = useState([]);
+  const [niveauxByKey, setNiveauxByKey] = useState({});
+  const toggleKey = (key) => setSelectedKeys((p) => (p.includes(key) ? p.filter((x) => x !== key) : [...p, key]));
   const exercisesMap = exMap(data);
   return (
     <div style={{ ...styles.card, marginTop: 10 }}>
       <label style={styles.fieldLabel}>Nom du type de séance</label>
       <input style={styles.textInput} value={nom} onChange={(e) => setNom(e.target.value)} placeholder="Ex: Full body E" />
       <label style={styles.fieldLabel}>Exercices inclus</label>
+      <p style={{ fontSize: 11, color: COLORS.textFaint, marginTop: -4, marginBottom: 8 }}>
+        Un exercice présent dans plusieurs catégories peut être coché indépendamment dans chacune, avec son propre niveau.
+      </p>
       <div style={styles.checklist}>
-        {groupExIdsByZone(data.exercises.map((e) => e.id), exercisesMap).map(([label, exIds]) => (
+        {groupExIdsByZoneMulti(data.exercises.map((e) => e.id), exercisesMap).map(([label, exIds]) => (
           <div key={label} style={{ marginBottom: 10 }}>
             <div style={{ fontSize: 10, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, margin: "6px 0 4px" }}>
               {label}
             </div>
             {exIds.map((exId) => {
               const ex = exercisesMap[exId];
+              const key = selKey(exId, label);
+              const isChecked = selectedKeys.includes(key);
               return (
-                <label key={ex.id} style={styles.checkItem}>
-                  <input type="checkbox" checked={ids.includes(ex.id)} onChange={() => toggle(ex.id)} />
-                  <span style={{ marginLeft: 8 }}>{exDisplayName(ex)}</span>
-                </label>
+                <div key={key} style={{ marginBottom: 4 }}>
+                  <label style={styles.checkItem}>
+                    <input type="checkbox" checked={isChecked} onChange={() => toggleKey(key)} />
+                    <span style={{ marginLeft: 8 }}>{exDisplayName(ex)}</span>
+                  </label>
+                  {isChecked && (
+                    <LevelPickerButtons
+                      exercise={ex}
+                      selected={niveauxByKey[key]}
+                      onSelect={(lvl) => setNiveauxByKey((p) => ({ ...p, [key]: lvl }))}
+                    />
+                  )}
+                </div>
               );
             })}
           </div>
@@ -4061,7 +4900,14 @@ function NewSeanceTypeForm({ data, onCancel, onSave }) {
       </div>
       <div style={{ display: "flex", gap: 10, marginTop: 14, justifyContent: "flex-end" }}>
         <button style={styles.secondaryBtn} onClick={onCancel}>Annuler</button>
-        <button style={styles.primaryBtn} disabled={!nom} onClick={() => onSave({ nom, exerciceIds: ids })}>
+        <button
+          style={styles.primaryBtn}
+          disabled={!nom}
+          onClick={() => {
+            const { exerciceIds, niveaux } = finalizeSelection(selectedKeys, niveauxByKey, exercisesMap);
+            onSave({ nom, exerciceIds, niveaux });
+          }}
+        >
           Créer
         </button>
       </div>
@@ -4071,28 +4917,52 @@ function NewSeanceTypeForm({ data, onCancel, onSave }) {
 
 function EditSeanceTypeForm({ data, seanceType, onCancel, onSave }) {
   const [nom, setNom] = useState(seanceType.nom);
-  const [ids, setIds] = useState(seanceType.exerciceIds);
-  const toggle = (id) => setIds((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
   const exercisesMap = exMap(data);
+  const [selectedKeys, setSelectedKeys] = useState(() =>
+    seanceType.exerciceIds.map((exId) => selKey(exId, zoneLabel(getExerciseZones(exercisesMap[exId])[0])))
+  );
+  const [niveauxByKey, setNiveauxByKey] = useState(() => {
+    const niv = {};
+    seanceType.exerciceIds.forEach((exId) => {
+      const key = selKey(exId, zoneLabel(getExerciseZones(exercisesMap[exId])[0]));
+      if (seanceType.niveaux && seanceType.niveaux[exId] != null) niv[key] = seanceType.niveaux[exId];
+    });
+    return niv;
+  });
+  const toggleKey = (key) => setSelectedKeys((p) => (p.includes(key) ? p.filter((x) => x !== key) : [...p, key]));
   return (
     <div style={{ ...styles.card, borderColor: COLORS.accent2 }}>
       <div style={{ fontFamily: FONT_DISPLAY, fontSize: 15, color: COLORS.text, marginBottom: 12 }}>Modifier la séance</div>
       <label style={styles.fieldLabel}>Nom du type de séance</label>
       <input style={styles.textInput} value={nom} onChange={(e) => setNom(e.target.value)} />
       <label style={styles.fieldLabel}>Exercices inclus</label>
+      <p style={{ fontSize: 11, color: COLORS.textFaint, marginTop: -4, marginBottom: 8 }}>
+        Un exercice présent dans plusieurs catégories peut être coché indépendamment dans chacune, avec son propre niveau.
+      </p>
       <div style={styles.checklist}>
-        {groupExIdsByZone(data.exercises.map((e) => e.id), exercisesMap).map(([label, exIds]) => (
+        {groupExIdsByZoneMulti(data.exercises.map((e) => e.id), exercisesMap).map(([label, exIds]) => (
           <div key={label} style={{ marginBottom: 10 }}>
             <div style={{ fontSize: 10, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, margin: "6px 0 4px" }}>
               {label}
             </div>
             {exIds.map((exId) => {
               const ex = exercisesMap[exId];
+              const key = selKey(exId, label);
+              const isChecked = selectedKeys.includes(key);
               return (
-                <label key={ex.id} style={styles.checkItem}>
-                  <input type="checkbox" checked={ids.includes(ex.id)} onChange={() => toggle(ex.id)} />
-                  <span style={{ marginLeft: 8 }}>{exDisplayName(ex)}</span>
-                </label>
+                <div key={key} style={{ marginBottom: 4 }}>
+                  <label style={styles.checkItem}>
+                    <input type="checkbox" checked={isChecked} onChange={() => toggleKey(key)} />
+                    <span style={{ marginLeft: 8 }}>{exDisplayName(ex)}</span>
+                  </label>
+                  {isChecked && (
+                    <LevelPickerButtons
+                      exercise={ex}
+                      selected={niveauxByKey[key]}
+                      onSelect={(lvl) => setNiveauxByKey((p) => ({ ...p, [key]: lvl }))}
+                    />
+                  )}
+                </div>
               );
             })}
           </div>
@@ -4100,7 +4970,14 @@ function EditSeanceTypeForm({ data, seanceType, onCancel, onSave }) {
       </div>
       <div style={{ display: "flex", gap: 10, marginTop: 14, justifyContent: "flex-end" }}>
         <button style={styles.secondaryBtn} onClick={onCancel}>Annuler</button>
-        <button style={styles.primaryBtn} disabled={!nom} onClick={() => onSave({ nom, exerciceIds: ids })}>
+        <button
+          style={styles.primaryBtn}
+          disabled={!nom}
+          onClick={() => {
+            const { exerciceIds, niveaux } = finalizeSelection(selectedKeys, niveauxByKey, exercisesMap);
+            onSave({ nom, exerciceIds, niveaux });
+          }}
+        >
           Enregistrer
         </button>
       </div>
@@ -4172,13 +5049,36 @@ function CTSettingsFields({ workSeconds, setWorkSeconds, restSeconds, setRestSec
 
 function NewCTTypeForm({ data, onCancel, onSave }) {
   const [nom, setNom] = useState("");
-  const [ids, setIds] = useState([]);
+  const [mode, setMode] = useState("liste");
+  const [selectedKeys, setSelectedKeys] = useState([]);
+  const [niveauxByKey, setNiveauxByKey] = useState({});
   const [workSeconds, setWorkSeconds] = useState(WARMUP_WORK_SECONDS);
   const [restSeconds, setRestSeconds] = useState(WARMUP_REST_SECONDS);
   const [roundRestSeconds, setRoundRestSeconds] = useState(WARMUP_ROUND_REST_SECONDS);
-  const [rounds, setRounds] = useState(2);
-  const toggle = (id) => setIds((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
+  const [rounds, setRounds] = useState(5);
+  const [tableRows, setTableRows] = useState([
+    { id: uid("ctrow"), groupe: "", cells: Array.from({ length: 5 }, () => ({ exerciceId: "", poids: "" })) },
+  ]);
+  const toggleKey = (key) => setSelectedKeys((p) => (p.includes(key) ? p.filter((x) => x !== key) : [...p, key]));
   const exercisesMap = exMap(data);
+  const levelNames = data.ctLevelNames && data.ctLevelNames.length
+    ? data.ctLevelNames
+    : ["Niveau 1", "Niveau 2", "Niveau 3", "Niveau 4", "Niveau 5"];
+
+  const buildTableExerciceIdsAndNiveaux = () => {
+    const exerciceIds = [];
+    const niveaux = {};
+    tableRows.forEach((row) => {
+      row.cells.forEach((cell) => {
+        if (cell.exerciceId && !exerciceIds.includes(cell.exerciceId)) {
+          exerciceIds.push(cell.exerciceId);
+          if (cell.niveau != null) niveaux[cell.exerciceId] = cell.niveau;
+        }
+      });
+    });
+    return { exerciceIds, niveaux };
+  };
+
   return (
     <div style={{ ...styles.card, marginTop: 10 }}>
       <label style={styles.fieldLabel}>Nom du circuit (ex: CTA, CTB, CTC)</label>
@@ -4190,31 +5090,91 @@ function NewCTTypeForm({ data, onCancel, onSave }) {
         roundRestSeconds={roundRestSeconds} setRoundRestSeconds={setRoundRestSeconds}
         rounds={rounds} setRounds={setRounds}
       />
-      <label style={styles.fieldLabel}>Exercices inclus</label>
-      <div style={styles.checklist}>
-        {groupExIdsByZone(data.exercises.map((e) => e.id), exercisesMap).map(([label, exIds]) => (
-          <div key={label} style={{ marginBottom: 10 }}>
-            <div style={{ fontSize: 10, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, margin: "6px 0 4px" }}>
-              {label}
-            </div>
-            {exIds.map((exId) => {
-              const ex = exercisesMap[exId];
-              return (
-                <label key={ex.id} style={styles.checkItem}>
-                  <input type="checkbox" checked={ids.includes(ex.id)} onChange={() => toggle(ex.id)} />
-                  <span style={{ marginLeft: 8 }}>{exDisplayName(ex)}</span>
-                </label>
-              );
-            })}
-          </div>
-        ))}
+
+      <div style={{ display: "flex", gap: 8, marginTop: 12, marginBottom: 12 }}>
+        <button
+          style={{ ...styles.secondaryBtn, ...(mode === "liste" ? { background: COLORS.accent, color: COLORS.bg, borderColor: COLORS.accent } : {}) }}
+          onClick={() => setMode("liste")}
+        >
+          Liste d'exercices
+        </button>
+        <button
+          style={{ ...styles.secondaryBtn, ...(mode === "tableau" ? { background: COLORS.accent, color: COLORS.bg, borderColor: COLORS.accent } : {}) }}
+          onClick={() => setMode("tableau")}
+        >
+          📋 Tableau (par tour)
+        </button>
       </div>
+
+      {mode === "liste" ? (
+        <>
+          <label style={styles.fieldLabel}>Exercices inclus</label>
+          <p style={{ fontSize: 11, color: COLORS.textFaint, marginTop: -4, marginBottom: 8 }}>
+            Un exercice présent dans plusieurs catégories peut être coché indépendamment dans chacune, avec son propre niveau.
+          </p>
+          <div style={styles.checklist}>
+            {groupExIdsByZoneMulti(data.exercises.map((e) => e.id), exercisesMap).map(([label, exIds]) => (
+              <div key={label} style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: 10, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, margin: "6px 0 4px" }}>
+                  {label}
+                </div>
+                {exIds.map((exId) => {
+                  const ex = exercisesMap[exId];
+                  const key = selKey(exId, label);
+                  const isChecked = selectedKeys.includes(key);
+                  return (
+                    <div key={key} style={{ marginBottom: 4 }}>
+                      <label style={styles.checkItem}>
+                        <input type="checkbox" checked={isChecked} onChange={() => toggleKey(key)} />
+                        <span style={{ marginLeft: 8 }}>{exDisplayName(ex)}</span>
+                      </label>
+                      {isChecked && (
+                        <LevelPickerButtons
+                          exercise={ex}
+                          selected={niveauxByKey[key]}
+                          onSelect={(lvl) => setNiveauxByKey((p) => ({ ...p, [key]: lvl }))}
+                        />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        </>
+      ) : (
+        <>
+          <label style={styles.fieldLabel}>Exercices par tour</label>
+          <p style={{ fontSize: 11, color: COLORS.textFaint, marginTop: -4, marginBottom: 8 }}>
+            Ce modèle pourra être chargé directement dans l'onglet CT → Tableau, avec cette structure déjà prête.
+          </p>
+          <CTTableGridEditor
+            data={data}
+            rows={tableRows}
+            setRows={setTableRows}
+            rounds={rounds}
+            setRounds={setRounds}
+            levelNames={levelNames}
+            showPoids={false}
+            isCoach={true}
+          />
+        </>
+      )}
+
       <div style={{ display: "flex", gap: 10, marginTop: 14, justifyContent: "flex-end" }}>
         <button style={styles.secondaryBtn} onClick={onCancel}>Annuler</button>
         <button
           style={styles.primaryBtn}
-          disabled={!nom || ids.length === 0}
-          onClick={() => onSave({ nom, exerciceIds: ids, workSeconds, restSeconds, roundRestSeconds, rounds })}
+          disabled={!nom || (mode === "liste" ? selectedKeys.length === 0 : tableRows.every((r) => r.cells.every((c) => !c.exerciceId)))}
+          onClick={() => {
+            if (mode === "liste") {
+              const { exerciceIds, niveaux } = finalizeSelection(selectedKeys, niveauxByKey, exercisesMap);
+              onSave({ nom, exerciceIds, niveaux, workSeconds, restSeconds, roundRestSeconds, rounds });
+            } else {
+              const { exerciceIds, niveaux } = buildTableExerciceIdsAndNiveaux();
+              onSave({ nom, exerciceIds, niveaux, workSeconds, restSeconds, roundRestSeconds, rounds, table: { rounds, rows: tableRows } });
+            }
+          }}
         >
           Créer
         </button>
@@ -4225,13 +5185,47 @@ function NewCTTypeForm({ data, onCancel, onSave }) {
 
 function EditCTTypeForm({ data, ctType, onCancel, onSave }) {
   const [nom, setNom] = useState(ctType.nom);
-  const [ids, setIds] = useState(ctType.exerciceIds);
+  const exercisesMap = exMap(data);
+  const [mode, setMode] = useState(ctType.table ? "tableau" : "liste");
+  const [selectedKeys, setSelectedKeys] = useState(() =>
+    ctType.exerciceIds.map((exId) => selKey(exId, zoneLabel(getExerciseZones(exercisesMap[exId])[0])))
+  );
+  const [niveauxByKey, setNiveauxByKey] = useState(() => {
+    const niv = {};
+    ctType.exerciceIds.forEach((exId) => {
+      const key = selKey(exId, zoneLabel(getExerciseZones(exercisesMap[exId])[0]));
+      if (ctType.niveaux && ctType.niveaux[exId] != null) niv[key] = ctType.niveaux[exId];
+    });
+    return niv;
+  });
   const [workSeconds, setWorkSeconds] = useState(ctType.workSeconds ?? WARMUP_WORK_SECONDS);
   const [restSeconds, setRestSeconds] = useState(ctType.restSeconds ?? WARMUP_REST_SECONDS);
   const [roundRestSeconds, setRoundRestSeconds] = useState(ctType.roundRestSeconds ?? WARMUP_ROUND_REST_SECONDS);
   const [rounds, setRounds] = useState(ctType.rounds ?? 2);
-  const toggle = (id) => setIds((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
-  const exercisesMap = exMap(data);
+  const [tableRows, setTableRows] = useState(
+    ctType.table && Array.isArray(ctType.table.rows)
+      ? ctType.table.rows
+      : [{ id: uid("ctrow"), groupe: "", cells: Array.from({ length: ctType.rounds ?? 5 }, () => ({ exerciceId: "", poids: "" })) }]
+  );
+  const toggleKey = (key) => setSelectedKeys((p) => (p.includes(key) ? p.filter((x) => x !== key) : [...p, key]));
+  const levelNames = data.ctLevelNames && data.ctLevelNames.length
+    ? data.ctLevelNames
+    : ["Niveau 1", "Niveau 2", "Niveau 3", "Niveau 4", "Niveau 5"];
+
+  const buildTableExerciceIdsAndNiveaux = () => {
+    const exerciceIds = [];
+    const niveaux = {};
+    tableRows.forEach((row) => {
+      row.cells.forEach((cell) => {
+        if (cell.exerciceId && !exerciceIds.includes(cell.exerciceId)) {
+          exerciceIds.push(cell.exerciceId);
+          if (cell.niveau != null) niveaux[cell.exerciceId] = cell.niveau;
+        }
+      });
+    });
+    return { exerciceIds, niveaux };
+  };
+
   return (
     <div style={{ ...styles.card, borderColor: COLORS.accent2 }}>
       <div style={{ fontFamily: FONT_DISPLAY, fontSize: 15, color: COLORS.text, marginBottom: 12 }}>Modifier le circuit</div>
@@ -4244,31 +5238,91 @@ function EditCTTypeForm({ data, ctType, onCancel, onSave }) {
         roundRestSeconds={roundRestSeconds} setRoundRestSeconds={setRoundRestSeconds}
         rounds={rounds} setRounds={setRounds}
       />
-      <label style={styles.fieldLabel}>Exercices inclus</label>
-      <div style={styles.checklist}>
-        {groupExIdsByZone(data.exercises.map((e) => e.id), exercisesMap).map(([label, exIds]) => (
-          <div key={label} style={{ marginBottom: 10 }}>
-            <div style={{ fontSize: 10, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, margin: "6px 0 4px" }}>
-              {label}
-            </div>
-            {exIds.map((exId) => {
-              const ex = exercisesMap[exId];
-              return (
-                <label key={ex.id} style={styles.checkItem}>
-                  <input type="checkbox" checked={ids.includes(ex.id)} onChange={() => toggle(ex.id)} />
-                  <span style={{ marginLeft: 8 }}>{exDisplayName(ex)}</span>
-                </label>
-              );
-            })}
-          </div>
-        ))}
+
+      <div style={{ display: "flex", gap: 8, marginTop: 12, marginBottom: 12 }}>
+        <button
+          style={{ ...styles.secondaryBtn, ...(mode === "liste" ? { background: COLORS.accent, color: COLORS.bg, borderColor: COLORS.accent } : {}) }}
+          onClick={() => setMode("liste")}
+        >
+          Liste d'exercices
+        </button>
+        <button
+          style={{ ...styles.secondaryBtn, ...(mode === "tableau" ? { background: COLORS.accent, color: COLORS.bg, borderColor: COLORS.accent } : {}) }}
+          onClick={() => setMode("tableau")}
+        >
+          📋 Tableau (par tour)
+        </button>
       </div>
+
+      {mode === "liste" ? (
+        <>
+          <label style={styles.fieldLabel}>Exercices inclus</label>
+          <p style={{ fontSize: 11, color: COLORS.textFaint, marginTop: -4, marginBottom: 8 }}>
+            Un exercice présent dans plusieurs catégories peut être coché indépendamment dans chacune, avec son propre niveau.
+          </p>
+          <div style={styles.checklist}>
+            {groupExIdsByZoneMulti(data.exercises.map((e) => e.id), exercisesMap).map(([label, exIds]) => (
+              <div key={label} style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: 10, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, margin: "6px 0 4px" }}>
+                  {label}
+                </div>
+                {exIds.map((exId) => {
+                  const ex = exercisesMap[exId];
+                  const key = selKey(exId, label);
+                  const isChecked = selectedKeys.includes(key);
+                  return (
+                    <div key={key} style={{ marginBottom: 4 }}>
+                      <label style={styles.checkItem}>
+                        <input type="checkbox" checked={isChecked} onChange={() => toggleKey(key)} />
+                        <span style={{ marginLeft: 8 }}>{exDisplayName(ex)}</span>
+                      </label>
+                      {isChecked && (
+                        <LevelPickerButtons
+                          exercise={ex}
+                          selected={niveauxByKey[key]}
+                          onSelect={(lvl) => setNiveauxByKey((p) => ({ ...p, [key]: lvl }))}
+                        />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        </>
+      ) : (
+        <>
+          <label style={styles.fieldLabel}>Exercices par tour</label>
+          <p style={{ fontSize: 11, color: COLORS.textFaint, marginTop: -4, marginBottom: 8 }}>
+            Ce modèle pourra être chargé directement dans l'onglet CT → Tableau, avec cette structure déjà prête.
+          </p>
+          <CTTableGridEditor
+            data={data}
+            rows={tableRows}
+            setRows={setTableRows}
+            rounds={rounds}
+            setRounds={setRounds}
+            levelNames={levelNames}
+            showPoids={false}
+            isCoach={true}
+          />
+        </>
+      )}
+
       <div style={{ display: "flex", gap: 10, marginTop: 14, justifyContent: "flex-end" }}>
         <button style={styles.secondaryBtn} onClick={onCancel}>Annuler</button>
         <button
           style={styles.primaryBtn}
           disabled={!nom}
-          onClick={() => onSave({ nom, exerciceIds: ids, workSeconds, restSeconds, roundRestSeconds, rounds })}
+          onClick={() => {
+            if (mode === "liste") {
+              const { exerciceIds, niveaux } = finalizeSelection(selectedKeys, niveauxByKey, exercisesMap);
+              onSave({ nom, exerciceIds, niveaux, workSeconds, restSeconds, roundRestSeconds, rounds });
+            } else {
+              const { exerciceIds, niveaux } = buildTableExerciceIdsAndNiveaux();
+              onSave({ nom, exerciceIds, niveaux, workSeconds, restSeconds, roundRestSeconds, rounds, table: { rounds, rows: tableRows } });
+            }
+          }}
         >
           Enregistrer
         </button>
@@ -4332,59 +5386,310 @@ function EditCTProgramForm({ data, program, onCancel, onSave }) {
   );
 }
 
+function ExerciseLevelsFields({ niveaux, onChange }) {
+  const values = niveaux || [];
+  const updateAt = (i, v) => {
+    const next = [...values];
+    next[i] = v;
+    onChange(next);
+  };
+  const removeAt = (i) => onChange(values.filter((_, idx) => idx !== i));
+  const addLevel = () => onChange([...values, ""]);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 6 }}>
+      {values.map((v, i) => (
+        <div key={i} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 12, color: COLORS.textFaint, width: 16 }}>{i + 1}.</span>
+          <input
+            style={{ ...styles.textInput, marginBottom: 0, flex: 1 }}
+            value={v}
+            onChange={(e) => updateAt(i, e.target.value)}
+            placeholder={`Ex: ${["Poids du corps", "Élastique léger", "Élastique moyen", "Charge légère", "Charge lourde"][i] || `Niveau ${i + 1}`}`}
+          />
+          <button
+            type="button"
+            onClick={() => removeAt(i)}
+            title="Retirer ce niveau"
+            aria-label="Retirer ce niveau"
+            style={{
+              width: 26,
+              height: 26,
+              borderRadius: 6,
+              border: `1px solid ${COLORS.cardBorder}`,
+              background: COLORS.bg2,
+              color: COLORS.textFaint,
+              fontSize: 12,
+              cursor: "pointer",
+              flexShrink: 0,
+            }}
+          >
+            ✕
+          </button>
+        </div>
+      ))}
+      {values.length === 0 && (
+        <div style={{ fontSize: 12, color: COLORS.textFaint }}>Aucun niveau pour l'instant.</div>
+      )}
+      <button type="button" style={{ ...styles.secondaryBtn, alignSelf: "flex-start" }} onClick={addLevel}>
+        + Ajouter un niveau
+      </button>
+    </div>
+  );
+}
+
+function LevelPickerButtons({ exercise, selected, onSelect, fallbackNames }) {
+  const niveaux = getExerciseNiveaux(exercise, fallbackNames);
+  if (!niveaux.length) return null;
+  return (
+    <div style={{ display: "flex", gap: 3, flexWrap: "wrap", marginTop: 4, marginLeft: 22 }}>
+      {niveaux.map((niv, idx) => {
+        const lvl = idx + 1;
+        const isActive = (selected || 1) === lvl;
+        return (
+          <button
+            key={lvl}
+            type="button"
+            onClick={(e) => { e.preventDefault(); onSelect(lvl); }}
+            title={niv.nom}
+            style={{
+              fontSize: 10,
+              padding: "3px 8px",
+              borderRadius: 12,
+              border: `1px solid ${isActive ? COLORS.accent : COLORS.cardBorder}`,
+              background: isActive ? COLORS.accent : COLORS.bg2,
+              color: isActive ? COLORS.bg : COLORS.textDim,
+              fontWeight: isActive ? 700 : 400,
+              cursor: "pointer",
+              fontFamily: FONT_BODY,
+            }}
+          >
+            {niv.nom}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function ExerciseLevelsWithDetailsFields({ niveaux, onChange }) {
+  const values = niveaux || [];
+  const [expandedIdx, setExpandedIdx] = useState(null);
+
+  const updateAt = (i, patch) => onChange(values.map((v, idx) => (idx === i ? { ...v, ...patch } : v)));
+  const removeAt = (i) => {
+    onChange(values.filter((_, idx) => idx !== i));
+    if (expandedIdx === i) setExpandedIdx(null);
+  };
+  const addLevel = () => onChange([...values, { nom: "", consignes: {}, videoUrl: "" }]);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 6 }}>
+      {values.map((v, i) => (
+        <div key={i} style={{ border: `1px solid ${COLORS.cardBorder}`, borderRadius: 8, padding: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 12, color: COLORS.textFaint, width: 16 }}>{i + 1}.</span>
+            <input
+              style={{ ...styles.textInput, marginBottom: 0, flex: 1 }}
+              value={v.nom || ""}
+              onChange={(e) => updateAt(i, { nom: e.target.value })}
+              placeholder={`Ex: ${["Poids du corps", "Élastique léger", "Élastique moyen", "Charge légère", "Charge lourde"][i] || `Niveau ${i + 1}`}`}
+            />
+            <button
+              type="button"
+              style={styles.linkBtn}
+              onClick={() => setExpandedIdx(expandedIdx === i ? null : i)}
+            >
+              {expandedIdx === i ? "Fermer" : "Tips/Vidéo"}
+            </button>
+            <button
+              type="button"
+              onClick={() => removeAt(i)}
+              title="Retirer ce niveau"
+              aria-label="Retirer ce niveau"
+              style={{
+                width: 26,
+                height: 26,
+                borderRadius: 6,
+                border: `1px solid ${COLORS.cardBorder}`,
+                background: COLORS.bg2,
+                color: COLORS.textFaint,
+                fontSize: 12,
+                cursor: "pointer",
+                flexShrink: 0,
+              }}
+            >
+              ✕
+            </button>
+          </div>
+          {expandedIdx === i && (
+            <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${COLORS.cardBorder}` }}>
+              <div style={{ fontSize: 11, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>
+                Tips de ce niveau (optionnel)
+              </div>
+              <ConsignesFields value={v.consignes || {}} onChange={(c) => updateAt(i, { consignes: c })} />
+              <label style={styles.fieldLabel}>Lien vidéo YouTube de ce niveau (optionnel)</label>
+              <input
+                style={styles.textInput}
+                value={v.videoUrl || ""}
+                onChange={(e) => updateAt(i, { videoUrl: e.target.value })}
+                placeholder="https://www.youtube.com/watch?v=..."
+              />
+            </div>
+          )}
+        </div>
+      ))}
+      {values.length === 0 && (
+        <div style={{ fontSize: 12, color: COLORS.textFaint }}>Aucun niveau pour l'instant.</div>
+      )}
+      <button type="button" style={{ ...styles.secondaryBtn, alignSelf: "flex-start" }} onClick={addLevel}>
+        + Ajouter un niveau
+      </button>
+    </div>
+  );
+}
+
+function MultiSelectWithCustom({ options, selected, onToggle, onAddCustom, onRemoveOption, formatLabel, placeholder }) {
+  const [customInput, setCustomInput] = useState("");
+  const submitCustom = () => {
+    const v = customInput.trim();
+    if (!v) return;
+    onAddCustom(v);
+    setCustomInput("");
+  };
+  return (
+    <div style={{ marginBottom: 6 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
+        {options.map((opt) => {
+          const isSelected = selected.includes(opt);
+          return (
+            <span
+              key={opt}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                borderRadius: 20,
+                background: isSelected ? COLORS.accent : COLORS.bg2,
+                border: `1px solid ${isSelected ? COLORS.accent : COLORS.cardBorder}`,
+                overflow: "hidden",
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => onToggle(opt)}
+                style={{
+                  fontSize: 12,
+                  padding: "6px 4px 6px 12px",
+                  border: "none",
+                  background: "none",
+                  cursor: "pointer",
+                  fontFamily: FONT_BODY,
+                  color: isSelected ? COLORS.bg : COLORS.textDim,
+                  fontWeight: isSelected ? 700 : 400,
+                }}
+              >
+                {isSelected ? "✓ " : ""}{formatLabel ? formatLabel(opt) : opt}
+              </button>
+              <button
+                type="button"
+                onClick={() => onRemoveOption(opt)}
+                title="Retirer cette option de la liste"
+                aria-label="Retirer cette option de la liste"
+                style={{
+                  fontSize: 12,
+                  padding: "6px 10px 6px 4px",
+                  border: "none",
+                  background: "none",
+                  cursor: "pointer",
+                  fontFamily: FONT_BODY,
+                  color: isSelected ? COLORS.bg : COLORS.textFaint,
+                  opacity: 0.75,
+                }}
+              >
+                ✕
+              </button>
+            </span>
+          );
+        })}
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <input
+          style={{ ...styles.textInput, marginBottom: 0 }}
+          value={customInput}
+          onChange={(e) => setCustomInput(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), submitCustom())}
+          placeholder={placeholder}
+        />
+        <button type="button" style={styles.secondaryBtn} onClick={submitCustom}>+ Ajouter</button>
+      </div>
+    </div>
+  );
+}
+
 function NewExerciseForm({ data, onCancel, onSave }) {
   const [nom, setNom] = useState("");
   const [consignes, setConsignes] = useState({});
   const [videoUrl, setVideoUrl] = useState("");
+  const [niveaux, setNiveaux] = useState([
+    { nom: "", consignes: {}, videoUrl: "" },
+    { nom: "", consignes: {}, videoUrl: "" },
+    { nom: "", consignes: {}, videoUrl: "" },
+    { nom: "", consignes: {}, videoUrl: "" },
+    { nom: "", consignes: {}, videoUrl: "" },
+  ]);
 
-  const uniqueZones = [...new Set([...STANDARD_ZONES, ...data.exercises.map((e) => e.zone).filter(Boolean)])];
-  const uniqueGroupes = [...new Set(data.exercises.map((e) => e.groupe).filter(Boolean))].sort();
+  const [zoneOptions, setZoneOptions] = useState([...new Set([...STANDARD_ZONES, ...data.exercises.flatMap((e) => getExerciseZones(e))])]);
+  const [groupeOptions, setGroupeOptions] = useState([...new Set(data.exercises.flatMap((e) => getExerciseGroupes(e)))].sort());
+  const [selectedZones, setSelectedZones] = useState([]);
+  const [selectedGroupes, setSelectedGroupes] = useState([]);
 
-  const [zone, setZone] = useState(uniqueZones[0] || "");
-  const [zoneCustom, setZoneCustom] = useState("");
-  const [groupe, setGroupe] = useState(uniqueGroupes[0] || "");
-  const [groupeCustom, setGroupeCustom] = useState("");
-
-  const NEW_VALUE = "__new__";
-  const finalZone = zone === NEW_VALUE ? zoneCustom.trim() : zone;
-  const finalGroupe = groupe === NEW_VALUE ? groupeCustom.trim() : groupe;
+  const toggleZone = (z) => setSelectedZones((p) => (p.includes(z) ? p.filter((x) => x !== z) : [...p, z]));
+  const addCustomZone = (z) => {
+    if (!zoneOptions.includes(z)) setZoneOptions((p) => [...p, z]);
+    setSelectedZones((p) => (p.includes(z) ? p : [...p, z]));
+  };
+  const removeZoneOption = (z) => {
+    setZoneOptions((p) => p.filter((x) => x !== z));
+    setSelectedZones((p) => p.filter((x) => x !== z));
+  };
+  const toggleGroupe = (g) => setSelectedGroupes((p) => (p.includes(g) ? p.filter((x) => x !== g) : [...p, g]));
+  const addCustomGroupe = (g) => {
+    if (!groupeOptions.includes(g)) setGroupeOptions((p) => [...p, g]);
+    setSelectedGroupes((p) => (p.includes(g) ? p : [...p, g]));
+  };
+  const removeGroupeOption = (g) => {
+    setGroupeOptions((p) => p.filter((x) => x !== g));
+    setSelectedGroupes((p) => p.filter((x) => x !== g));
+  };
 
   return (
     <div style={{ ...styles.card, marginTop: 10 }}>
       <label style={styles.fieldLabel}>Nom de l'exercice</label>
       <input style={styles.textInput} value={nom} onChange={(e) => setNom(e.target.value)} />
 
-      <label style={styles.fieldLabel}>Zone</label>
-      <select style={styles.textInput} value={zone} onChange={(e) => setZone(e.target.value)}>
-        {uniqueZones.map((z) => (
-          <option key={z} value={z}>{zoneLabel(z)}</option>
-        ))}
-        <option value={NEW_VALUE}>+ Nouvelle zone…</option>
-      </select>
-      {zone === NEW_VALUE && (
-        <input
-          style={styles.textInput}
-          value={zoneCustom}
-          onChange={(e) => setZoneCustom(e.target.value)}
-          placeholder="Ex: BAS DU CORPS"
-        />
-      )}
+      <label style={styles.fieldLabel}>Zones (une ou plusieurs)</label>
+      <MultiSelectWithCustom
+        options={zoneOptions}
+        selected={selectedZones}
+        onToggle={toggleZone}
+        onAddCustom={addCustomZone}
+        onRemoveOption={removeZoneOption}
+        formatLabel={zoneLabel}
+        placeholder="Ex: BAS DU CORPS"
+      />
 
-      <label style={styles.fieldLabel}>Groupe musculaire</label>
-      <select style={styles.textInput} value={groupe} onChange={(e) => setGroupe(e.target.value)}>
-        {uniqueGroupes.map((g) => (
-          <option key={g} value={g}>{g}</option>
-        ))}
-        <option value={NEW_VALUE}>+ Nouveau groupe…</option>
-      </select>
-      {groupe === NEW_VALUE && (
-        <input
-          style={styles.textInput}
-          value={groupeCustom}
-          onChange={(e) => setGroupeCustom(e.target.value)}
-          placeholder="Ex: Quadriceps"
-        />
-      )}
+      <label style={styles.fieldLabel}>Groupes musculaires (un ou plusieurs)</label>
+      <MultiSelectWithCustom
+        options={groupeOptions}
+        selected={selectedGroupes}
+        onToggle={toggleGroupe}
+        onAddCustom={addCustomGroupe}
+        onRemoveOption={removeGroupeOption}
+        placeholder="Ex: Quadriceps"
+      />
+
+      <label style={styles.fieldLabel}>Niveaux de cet exercice (optionnel, pour le tableau CT)</label>
+      <ExerciseLevelsWithDetailsFields niveaux={niveaux} onChange={setNiveaux} />
 
       <div style={{ marginTop: 4, marginBottom: 6, fontSize: 11, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5 }}>
         Tips (optionnel)
@@ -4403,8 +5708,19 @@ function NewExerciseForm({ data, onCancel, onSave }) {
         <button style={styles.secondaryBtn} onClick={onCancel}>Annuler</button>
         <button
           style={styles.primaryBtn}
-          disabled={!nom || !finalZone || !finalGroupe}
-          onClick={() => onSave({ nom, zone: finalZone, groupe: finalGroupe, consignes, videoUrl: videoUrl.trim() })}
+          disabled={!nom || selectedZones.length === 0 || selectedGroupes.length === 0}
+          onClick={() =>
+            onSave({
+              nom,
+              zone: selectedZones[0],
+              zones: selectedZones,
+              groupe: selectedGroupes.join("\n"),
+              groupes: selectedGroupes,
+              niveaux,
+              consignes,
+              videoUrl: videoUrl.trim(),
+            })
+          }
         >
           Ajouter
         </button>
@@ -4417,18 +5733,41 @@ function EditExerciseForm({ data, exercise, onCancel, onSave }) {
   const [nom, setNom] = useState(exercise.nom);
   const [consignes, setConsignes] = useState(exercise.consignes || {});
   const [videoUrl, setVideoUrl] = useState(exercise.videoUrl || "");
+  const [niveaux, setNiveaux] = useState(
+    Array.isArray(exercise.niveaux) && exercise.niveaux.length
+      ? exercise.niveaux.map((n) => (typeof n === "string" ? { nom: n, consignes: {}, videoUrl: "" } : n))
+      : [
+          { nom: "", consignes: {}, videoUrl: "" },
+          { nom: "", consignes: {}, videoUrl: "" },
+          { nom: "", consignes: {}, videoUrl: "" },
+          { nom: "", consignes: {}, videoUrl: "" },
+          { nom: "", consignes: {}, videoUrl: "" },
+        ]
+  );
 
-  const uniqueZones = [...new Set([...STANDARD_ZONES, ...data.exercises.map((e) => e.zone).filter(Boolean)])];
-  const uniqueGroupes = [...new Set(data.exercises.map((e) => e.groupe).filter(Boolean))].sort();
+  const [zoneOptions, setZoneOptions] = useState([...new Set([...STANDARD_ZONES, ...data.exercises.flatMap((e) => getExerciseZones(e))])]);
+  const [groupeOptions, setGroupeOptions] = useState([...new Set(data.exercises.flatMap((e) => getExerciseGroupes(e)))].sort());
+  const [selectedZones, setSelectedZones] = useState(getExerciseZones(exercise));
+  const [selectedGroupes, setSelectedGroupes] = useState(getExerciseGroupes(exercise));
 
-  const [zone, setZone] = useState(exercise.zone || uniqueZones[0] || "");
-  const [zoneCustom, setZoneCustom] = useState("");
-  const [groupe, setGroupe] = useState(exercise.groupe || uniqueGroupes[0] || "");
-  const [groupeCustom, setGroupeCustom] = useState("");
-
-  const NEW_VALUE = "__new__";
-  const finalZone = zone === NEW_VALUE ? zoneCustom.trim() : zone;
-  const finalGroupe = groupe === NEW_VALUE ? groupeCustom.trim() : groupe;
+  const toggleZone = (z) => setSelectedZones((p) => (p.includes(z) ? p.filter((x) => x !== z) : [...p, z]));
+  const addCustomZone = (z) => {
+    if (!zoneOptions.includes(z)) setZoneOptions((p) => [...p, z]);
+    setSelectedZones((p) => (p.includes(z) ? p : [...p, z]));
+  };
+  const removeZoneOption = (z) => {
+    setZoneOptions((p) => p.filter((x) => x !== z));
+    setSelectedZones((p) => p.filter((x) => x !== z));
+  };
+  const toggleGroupe = (g) => setSelectedGroupes((p) => (p.includes(g) ? p.filter((x) => x !== g) : [...p, g]));
+  const addCustomGroupe = (g) => {
+    if (!groupeOptions.includes(g)) setGroupeOptions((p) => [...p, g]);
+    setSelectedGroupes((p) => (p.includes(g) ? p : [...p, g]));
+  };
+  const removeGroupeOption = (g) => {
+    setGroupeOptions((p) => p.filter((x) => x !== g));
+    setSelectedGroupes((p) => p.filter((x) => x !== g));
+  };
 
   return (
     <div style={{ ...styles.card, borderColor: COLORS.accent2 }}>
@@ -4436,37 +5775,29 @@ function EditExerciseForm({ data, exercise, onCancel, onSave }) {
       <label style={styles.fieldLabel}>Nom de l'exercice</label>
       <input style={styles.textInput} value={nom} onChange={(e) => setNom(e.target.value)} />
 
-      <label style={styles.fieldLabel}>Zone</label>
-      <select style={styles.textInput} value={zone} onChange={(e) => setZone(e.target.value)}>
-        {uniqueZones.map((z) => (
-          <option key={z} value={z}>{zoneLabel(z)}</option>
-        ))}
-        <option value={NEW_VALUE}>+ Nouvelle zone…</option>
-      </select>
-      {zone === NEW_VALUE && (
-        <input
-          style={styles.textInput}
-          value={zoneCustom}
-          onChange={(e) => setZoneCustom(e.target.value)}
-          placeholder="Ex: BAS DU CORPS"
-        />
-      )}
+      <label style={styles.fieldLabel}>Zones (une ou plusieurs)</label>
+      <MultiSelectWithCustom
+        options={zoneOptions}
+        selected={selectedZones}
+        onToggle={toggleZone}
+        onAddCustom={addCustomZone}
+        onRemoveOption={removeZoneOption}
+        formatLabel={zoneLabel}
+        placeholder="Ex: BAS DU CORPS"
+      />
 
-      <label style={styles.fieldLabel}>Groupe musculaire</label>
-      <select style={styles.textInput} value={groupe} onChange={(e) => setGroupe(e.target.value)}>
-        {uniqueGroupes.map((g) => (
-          <option key={g} value={g}>{g}</option>
-        ))}
-        <option value={NEW_VALUE}>+ Nouveau groupe…</option>
-      </select>
-      {groupe === NEW_VALUE && (
-        <input
-          style={styles.textInput}
-          value={groupeCustom}
-          onChange={(e) => setGroupeCustom(e.target.value)}
-          placeholder="Ex: Quadriceps"
-        />
-      )}
+      <label style={styles.fieldLabel}>Groupes musculaires (un ou plusieurs)</label>
+      <MultiSelectWithCustom
+        options={groupeOptions}
+        selected={selectedGroupes}
+        onToggle={toggleGroupe}
+        onAddCustom={addCustomGroupe}
+        onRemoveOption={removeGroupeOption}
+        placeholder="Ex: Quadriceps"
+      />
+
+      <label style={styles.fieldLabel}>Niveaux de cet exercice (optionnel, pour le tableau CT)</label>
+      <ExerciseLevelsWithDetailsFields niveaux={niveaux} onChange={setNiveaux} />
 
       <div style={{ marginTop: 4, marginBottom: 6, fontSize: 11, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5 }}>
         Tips (optionnel)
@@ -4485,8 +5816,19 @@ function EditExerciseForm({ data, exercise, onCancel, onSave }) {
         <button style={styles.secondaryBtn} onClick={onCancel}>Annuler</button>
         <button
           style={styles.primaryBtn}
-          disabled={!nom || !finalZone || !finalGroupe}
-          onClick={() => onSave({ nom, zone: finalZone, groupe: finalGroupe, consignes, videoUrl: videoUrl.trim() })}
+          disabled={!nom || selectedZones.length === 0 || selectedGroupes.length === 0}
+          onClick={() =>
+            onSave({
+              nom,
+              zone: selectedZones[0],
+              zones: selectedZones,
+              groupe: selectedGroupes.join("\n"),
+              groupes: selectedGroupes,
+              niveaux,
+              consignes,
+              videoUrl: videoUrl.trim(),
+            })
+          }
         >
           Enregistrer
         </button>
