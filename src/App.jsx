@@ -14,6 +14,7 @@ const COACH_ACCOUNT_KEY = "coach-account-v1";
 const COACH_AUTH_KEY = "coach-authed-v1";
 const sessionsKey = (clientId) => `sessions-v1-${clientId}`;
 const profileKey = (clientId) => `profile-v1-${clientId}`;
+const bookingsKey = (clientId) => `calendly-bookings-v1-${clientId}`;
 
 function uid(prefix) {
   return prefix + Math.random().toString(36).slice(2, 9);
@@ -128,6 +129,8 @@ export default function App() {
 
   const [sessions, setSessions] = useState(null);
   const [sessionsLoaded, setSessionsLoaded] = useState(false);
+  const [bookings, setBookings] = useState(null);
+  const [bookingsLoaded, setBookingsLoaded] = useState(false);
 
   const [profile, setProfile] = useState(null);
   const [profileLoaded, setProfileLoaded] = useState(false);
@@ -245,7 +248,20 @@ export default function App() {
       setSessionsLoaded(true);
     })();
   }, [clientId]);
-
+useEffect(() => {
+  if (!clientId) return;
+  setBookingsLoaded(false);
+  (async () => {
+    let b = null;
+    try {
+      const r = await window.storage.get(bookingsKey(clientId), true);
+      if (r && r.value) b = JSON.parse(r.value);
+    } catch (e) {}
+    if (!b) b = [];
+    setBookings(b);
+    setBookingsLoaded(true);
+  })();
+}, [clientId]);
   useEffect(() => {
     if (!clientId) return;
     setProfileLoaded(false);
@@ -457,7 +473,7 @@ export default function App() {
         onLogoutCoach={logoutCoach}
       />
       <div style={styles.body}>
-        {!data || !sessionsLoaded ? (
+       {!data || !sessionsLoaded || !bookingsLoaded ? (
           <div style={{ ...styles.emptyState, padding: "60px 0" }}>Chargement des données du client…</div>
         ) : (
           <>
@@ -468,7 +484,11 @@ export default function App() {
                 persistProfile={persistProfile}
                 activeClient={activeClient}
                 role={role}
-                sessionsCount={data.sessions.length}
+                sessionsCount={
+  (bookings || []).filter(
+    (b) => b.status !== "annulee" && new Date(b.start_time) <= new Date()
+  ).length
+}
                 assignAccompagnement={assignAccompagnement}
                 setAccompagnementOffset={setAccompagnementOffset}
               />
