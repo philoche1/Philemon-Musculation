@@ -1126,7 +1126,7 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
             </div>
             {upcoming.map((b, i) => (
               <div key={i} style={{ fontSize: 14, padding: "6px 0" }}>
-                {new Date(b.start_time).toLocaleString("fr-FR", { weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })}
+               {new Date(b.start_time).toLocaleString("fr-FR", { weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })} {b.cancel_url && (<a href={b.cancel_url} target="_blank" rel="noopener noreferrer" style={{ marginLeft: 12, fontSize: 12, color: COLORS.accent, textDecoration: "underline" }}>Annuler</a>)}
               </div>
             ))}
           </div>
