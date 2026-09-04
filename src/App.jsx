@@ -317,6 +317,7 @@ useEffect(() => {
     setClients(newClients);
     try { await window.storage.set(CLIENTS_KEY, JSON.stringify(newClients), true); } catch (e) {}
     try { await window.storage.set(sessionsKey(newClient.id), JSON.stringify([]), true); } catch (e) {}
+  try { await fetch("/api/welcome-email", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${import.meta.env.VITE_ADMIN_PASSWORD}`, }, body: JSON.stringify({ name, email, pin }), }); } catch (e) {}
     await chooseClient(newClient.id);
     return newClient;
   };
