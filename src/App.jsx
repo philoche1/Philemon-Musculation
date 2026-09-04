@@ -1197,11 +1197,24 @@ function SuiviView({ data, persistSessions, role, activeClient }) {
   };
 
   const addSession = (session) => {
-    const newSessions = [...data.sessions, session];
-    persistSessions(newSessions);
-    setShowNew(false);
-    setExpanded(session.id);
-  };
+  const newSessions = [...data.sessions, session];
+  persistSessions(newSessions);
+  if (role === "client") {
+    fetch("/api/session-notification", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${import.meta.env.VITE_ADMIN_PASSWORD}`,
+      },
+      body: JSON.stringify({
+        clientName: activeClient ? activeClient.name : "Un client",
+        date: session.date,
+      }),
+    }).catch(() => {});
+  }
+  setShowNew(false);
+  setExpanded(session.id);
+};
 
   const assignedProgram = activeClient ? data.programs.find((p) => p.id === activeClient.programId) : null;
   const stMap = {};
