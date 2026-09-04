@@ -321,6 +321,15 @@ useEffect(() => {
     await chooseClient(newClient.id);
     return newClient;
   };
+  const deleteClient = async (id) => {
+  const newClients = (clients || []).filter((c) => c.id !== id);
+  setClients(newClients);
+  try { await window.storage.set(CLIENTS_KEY, JSON.stringify(newClients), true); } catch (e) {}
+  try { await window.storage.delete(sessionsKey(id), true); } catch (e) {}
+  try { await window.storage.delete(profileKey(id), true); } catch (e) {}
+  try { await window.storage.delete(bookingsKey(id), true); } catch (e) {}
+  if (clientId === id) setClientId(null);
+};
 
   const loginClient = (email, pin) => {
     const match = (clients || []).find(
@@ -452,6 +461,7 @@ useEffect(() => {
         role={role}
         onChoose={chooseClient}
         onAdd={addClient}
+        onDelete={deleteClient}
         onLogin={loginClient}
         onChangeRole={changeRole}
       />
@@ -675,14 +685,14 @@ function CoachAuth({ hasAccount, onCreate, onLogin, onChangeRole }) {
   );
 }
 
-function ClientSelect({ clients, role, onChoose, onAdd, onLogin, onChangeRole }) {
+function ClientSelect({ clients, role, onChoose, onAdd, onDelete, onLogin, onChangeRole }) {
   if (role === "coach") {
-    return <CoachClientPicker clients={clients} onChoose={onChoose} onAdd={onAdd} onChangeRole={onChangeRole} />;
+    return <CoachClientPicker clients={clients} onChoose={onChoose} onAdd={onAdd} onDelete={onDelete} onChangeRole={onChangeRole} />;
   }
   return <ClientLogin onLogin={onLogin} onChoose={onChoose} onChangeRole={onChangeRole} />;
 }
 
-function CoachClientPicker({ clients, onChoose, onAdd, onChangeRole }) {
+function CoachClientPicker({ clients, onChoose, onAdd, onDelete, onChangeRole }) {
   const [showAdd, setShowAdd] = useState(clients.length === 0);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -711,18 +721,30 @@ function CoachClientPicker({ clients, onChoose, onAdd, onChangeRole }) {
           <button style={styles.linkBtn} onClick={onChangeRole}>Je ne suis pas le coach, revenir en arrière</button>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
-          {clients.map((c) => (
-            <button key={c.id} style={styles.clientBtn} onClick={() => onChoose(c.id)}>
-              <span style={{ width: 32, height: 32, borderRadius: "50%", background: COLORS.accent, color: COLORS.bg, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT_DISPLAY, fontSize: 14, flexShrink: 0 }}>
-                {c.name.slice(0, 1).toUpperCase()}
-              </span>
-              <span style={{ flex: 1 }}>
-                <span style={{ display: "block", fontFamily: FONT_BODY, fontSize: 14, color: COLORS.text, fontWeight: 600 }}>{c.name}</span>
-                <span style={{ display: "block", fontSize: 11, color: COLORS.textDim }}>{c.email}</span>
-                <span style={{ display: "block", fontSize: 11, color: COLORS.textFaint }}>Code d'accès client : {c.pin}</span>
-              </span>
-            </button>
-          ))}
+        {clients.map((c) => (
+  <div key={c.id} style={{ display: "flex", alignItems: "stretch", gap: 8 }}>
+    <button style={{ ...styles.clientBtn, flex: 1 }} onClick={() => onChoose(c.id)}>
+      <span style={{ width: 32, height: 32, borderRadius: "50%", background: COLORS.accent, color: COLORS.bg, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT_DISPLAY, fontSize: 14, flexShrink: 0 }}>
+        {c.name.slice(0, 1).toUpperCase()}
+      </span>
+      <span style={{ flex: 1 }}>
+        <span style={{ display: "block", fontFamily: FONT_BODY, fontSize: 14, color: COLORS.text, fontWeight: 600 }}>{c.name}</span>
+        <span style={{ display: "block", fontSize: 11, color: COLORS.textDim }}>{c.email}</span>
+        <span style={{ display: "block", fontSize: 11, color: COLORS.textFaint }}>Code d'accès client : {c.pin}</span>
+      </span>
+    </button>
+    <button
+      style={{ ...styles.secondaryBtn, color: "#ff6b6b", borderColor: "#ff6b6b", padding: "0 14px" }}
+      onClick={() => {
+        if (window.confirm(`Supprimer définitivement ${c.name} et toutes ses données ?`)) {
+          onDelete(c.id);
+        }
+      }}
+    >
+      Suppr.
+    </button>
+  </div>
+))}
         </div>
 
         {!showAdd ? (
