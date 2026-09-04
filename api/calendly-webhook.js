@@ -47,6 +47,7 @@ export default async function handler(req, res) {
   const startTime = payload?.scheduled_event?.start_time;
   const eventUri = payload?.uri;
   const cancelUrl = payload?.cancel_url;
+  const rescheduleUrl = payload?.reschedule_url;
 
   if (!email || !startTime) {
     return res.status(400).json({ error: 'Données Calendly incomplètes' });
@@ -71,6 +72,7 @@ export default async function handler(req, res) {
       start_time: startTime,
       status: 'reservee',
       cancel_url: cancelUrl || null,
+      reschedule_url: rescheduleUrl || null,
     });
     await kvSet(bookingsKey(client.id), bookings);
     await verifierEtEnvoyerRelanceAvis(client, clients);
