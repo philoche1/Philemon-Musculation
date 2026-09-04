@@ -487,8 +487,9 @@ useEffect(() => {
                 sessionsCount={
   (bookings || []).filter(
     (b) => b.status !== "annulee" && new Date(b.start_time) <= new Date()
-  ).length
+  ).length              
 }
+bookings={bookings} 
                 assignAccompagnement={assignAccompagnement}
                 setAccompagnementOffset={setAccompagnementOffset}
               />
@@ -994,7 +995,7 @@ function groupExIdsByZoneMulti(exIds, exercises) {
   return order.map((label) => [label, byZone[label]]);
 }
 
-function ProfileView({ profile, profileLoaded, persistProfile, activeClient, role, sessionsCount, assignAccompagnement, setAccompagnementOffset }) {
+function ProfileView({ profile, profileLoaded, persistProfile, activeClient, role, sessionsCount, bookings, assignAccompagnement, setAccompagnementOffset }) {
   const [local, setLocal] = useState(profile || {});
   const [dirty, setDirty] = useState(false);
   const [editingOffset, setEditingOffset] = useState(false);
@@ -1113,6 +1114,24 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
         )}
       </div>
 
+      {(() => {
+        const upcoming = (bookings || [])
+          .filter((b) => b.status !== "annulee" && new Date(b.start_time) > new Date())
+          .sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
+        if (upcoming.length === 0) return null;
+        return (
+          <div style={{ ...styles.card, marginBottom: 16 }}>
+            <div style={{ fontSize: 11, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 10 }}>
+              Séances à venir
+            </div>
+            {upcoming.map((b, i) => (
+              <div key={i} style={{ fontSize: 14, padding: "6px 0" }}>
+                {new Date(b.start_time).toLocaleString("fr-FR", { weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })}
+              </div>
+            ))}
+          </div>
+        );
+      })()}
       <p style={{ color: COLORS.textDim, fontSize: 13, marginBottom: 16 }}>
         Ces informations aident le coach à personnaliser le suivi. Modifiable par le coach comme par le client.
       </p>
