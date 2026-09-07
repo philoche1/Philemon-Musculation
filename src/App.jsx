@@ -895,7 +895,7 @@ function Header({ role, view, setView, clientName, onChangeClient, saving, onLog
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
           {saving && <span style={{ fontSize: 11, color: COLORS.textFaint }}>Enregistrement…</span>}
-                        function Headerole === "coach" ? "Coach" : "Client"}</span>
+                          {role === "coach" ? "Coach" : "Client"}</span>
           {role === "coach" && (
             <button style={styles.linkBtn} onClick={onToggleApercuClient}>
               {apercuClient ? "← Revenir en mode coach" : "👁️ Aperçu client"}
