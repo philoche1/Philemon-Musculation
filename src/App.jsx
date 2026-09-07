@@ -117,8 +117,9 @@ export default function App() {
 
   const [clients, setClients] = useState(null);
   const [clientsLoaded, setClientsLoaded] = useState(false);
-  const [clientId, setClientId] = useState(null);
+   const [clientId, setClientId] = useState(null);
   const [clientChoiceLoaded, setClientChoiceLoaded] = useState(false);
+  const [clientRecord, setClientRecord] = useState(null); // données du client connecté (rôle client uniquement)
 
   const [coachAccount, setCoachAccount] = useState(null);
   const [coachAccountLoaded, setCoachAccountLoaded] = useState(false);
@@ -149,33 +150,39 @@ export default function App() {
       setRoleLoaded(true);
     })();
   }, []);
-
+  // Restaure la session client mémorisée sur cet appareil (sans jamais redemander le PIN)
   useEffect(() => {
+    if (getClientToken()) {
+      try {
+        const raw = window.localStorage.getItem("musculation-client-record-v1");
+        if (raw) setClientRecord(JSON.parse(raw));
+      } catch (e) {}
+    }
+  }, []);
+    // La liste complète des clients (avec leurs PIN) n'est chargée que pour un coach authentifié
+  useEffect(() => {
+    if (!(role === "coach" && coachAuthed)) return;
     (async () => {
       let cl = null;
       try {
         const r = await window.storage.get(CLIENTS_KEY, true);
         if (r && r.value) cl = JSON.parse(r.value);
       } catch (e) {}
+      setClients(cl || []);
+      setClientsLoaded(true);
+    })();
+  }, [role, coachAuthed]);
 
+  // Le catalogue (library) est lisible par un coach authentifié ou un client authentifié
+  useEffect(() => {
+    const canLoad = (role === "coach" && coachAuthed) || (role === "client" && !!clientId);
+    if (!canLoad) return;
+    (async () => {
       let lib = null;
       try {
         const r = await window.storage.get(LIBRARY_KEY, true);
         if (r && r.value) lib = JSON.parse(r.value);
       } catch (e) {}
-
-      if (!cl || cl.length === 0) {
-        cl = [{ id: "client1", name: "GG", email: "gg@example.com", pin: "0000" }];
-        try { await window.storage.set(CLIENTS_KEY, JSON.stringify(cl), true); } catch (e) {}
-        try {
-          await window.storage.set(
-            sessionsKey("client1"),
-            JSON.stringify(DEFAULT_DATA.sessions),
-            true
-          );
-        } catch (e) {}
-      }
-
       if (!lib) {
         lib = {
           exercises: DEFAULT_DATA.exercises,
@@ -186,20 +193,16 @@ export default function App() {
           alimentationVideos: { matin: "", midi: "", gouter: "", soir: "" },
           ctLevelNames: ["Niveau 1", "Niveau 2", "Niveau 3", "Niveau 4", "Niveau 5"],
         };
-        try { await window.storage.set(LIBRARY_KEY, JSON.stringify(lib), true); } catch (e) {}
       } else {
         if (!lib.ctTypes) lib.ctTypes = [];
         if (!lib.ctPrograms) lib.ctPrograms = [];
         if (!lib.alimentationVideos) lib.alimentationVideos = { matin: "", midi: "", gouter: "", soir: "" };
         if (!lib.ctLevelNames) lib.ctLevelNames = ["Niveau 1", "Niveau 2", "Niveau 3", "Niveau 4", "Niveau 5"];
       }
-
-      setClients(cl);
       setLibrary(lib);
-      setClientsLoaded(true);
       setLibraryLoaded(true);
     })();
-  }, []);
+  }, [role, coachAuthed, clientId]);
 
   useEffect(() => {
     (async () => {
@@ -211,15 +214,20 @@ export default function App() {
     })();
   }, []);
 
-  // Load coach account (shared, one account for the whole app)
+   // Vérifie seulement si un compte coach existe déjà, sans jamais exposer le mot de passe
   useEffect(() => {
     (async () => {
-      let acc = null;
       try {
-        const r = await window.storage.get(COACH_ACCOUNT_KEY, true);
-        if (r && r.value) acc = JSON.parse(r.value);
-      } catch (e) {}
-      setCoachAccount(acc);
+        const res = await fetch("/api/musculation-coach-login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "check" }),
+        });
+        const data = await res.json().catch(() => ({}));
+        setCoachAccount(data.hasAccount ? { email: null } : null);
+      } catch (e) {
+        setCoachAccount(null);
+      }
       setCoachAccountLoaded(true);
     })();
   }, []);
@@ -298,25 +306,34 @@ useEffect(() => {
     return { status: "ok" };
   };
 
-  const loginCoach = async (email, password) => {
-    if (!coachAccount) return { status: "no_account" };
-    if (coachAccount.email !== email.trim().toLowerCase()) return { status: "wrong_email" };
-    if (coachAccount.password !== password) return { status: "wrong_password" };
+   const loginCoach = async (email, password) => {
+    const res = await fetch("/api/musculation-coach-login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "login", email, password }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { status: data.status || "error" };
+    setCoachToken(data.token);
     setCoachAuthed(true);
-    try { await window.storage.set(COACH_AUTH_KEY, "true", false); } catch (e) {}
     return { status: "ok" };
   };
 
-  const logoutCoach = async () => {
+    const logoutCoach = async () => {
     setCoachAuthed(false);
-    try { await window.storage.set(COACH_AUTH_KEY, "false", false); } catch (e) {}
+    clearCoachToken();
   };
 
   const chooseClient = async (id) => {
     setClientId(id);
     try { await window.storage.set(CLIENT_CHOICE_KEY, id, false); } catch (e) {}
   };
-  const changeClient = () => setClientId(null);
+  const changeClient = () => {
+    setClientId(null);
+    setClientRecord(null);
+    clearClientToken();
+    try { window.localStorage.removeItem("musculation-client-record-v1"); } catch (e) {}
+  };
 
   const addClient = async (name, email, pin) => {
     const newClient = { id: uid("client"), name, email, pin };
@@ -324,7 +341,13 @@ useEffect(() => {
     setClients(newClients);
     try { await window.storage.set(CLIENTS_KEY, JSON.stringify(newClients), true); } catch (e) {}
     try { await window.storage.set(sessionsKey(newClient.id), JSON.stringify([]), true); } catch (e) {}
-  try { await fetch("/api/welcome-email", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${import.meta.env.VITE_ADMIN_PASSWORD}`, }, body: JSON.stringify({ name, email, pin }), }); } catch (e) {}
+    try {
+      await fetch("/api/welcome-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${getCoachToken()}` },
+        body: JSON.stringify({ name, email, pin }),
+      });
+    } catch (e) {}
     await chooseClient(newClient.id);
     return newClient;
   };
@@ -338,13 +361,18 @@ useEffect(() => {
   if (clientId === id) setClientId(null);
 };
 
-  const loginClient = (email, pin) => {
-    const match = (clients || []).find(
-      (c) => (c.email || "").trim().toLowerCase() === email.trim().toLowerCase()
-    );
-    if (!match) return { status: "not_found" };
-    if (String(match.pin) !== String(pin)) return { status: "wrong_pin" };
-    return { status: "ok", id: match.id };
+   const loginClient = async (email, pin) => {
+    const res = await fetch("/api/musculation-client-login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, pin }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { status: data.status || "error" };
+    setClientToken(data.token);
+    setClientRecord(data.client);
+    try { window.localStorage.setItem("musculation-client-record-v1", JSON.stringify(data.client)); } catch (e) {}
+    return { status: "ok", id: data.client.id };
   };
 
   const assignProgram = useCallback(async (programId) => {
@@ -434,8 +462,8 @@ useEffect(() => {
   }, [clientId]);
 
   const notReady =
-    !roleLoaded || !clientsLoaded || !libraryLoaded || !clientChoiceLoaded ||
-    !coachAccountLoaded || !coachAuthLoaded;
+    !roleLoaded || !clientChoiceLoaded || !coachAccountLoaded || !coachAuthLoaded ||
+    (role === "coach" && coachAuthed && !clientsLoaded);
 
   if (notReady) {
     return (
@@ -461,7 +489,10 @@ useEffect(() => {
     );
   }
 
-  if (!clientId || !clients.find((c) => c.id === clientId)) {
+  const needsClientSelection =
+    role === "client" ? !clientRecord : !clientId || !clients.find((c) => c.id === clientId);
+
+  if (needsClientSelection) {
     return (
       <ClientSelect
         clients={clients}
@@ -475,7 +506,7 @@ useEffect(() => {
     );
   }
 
-  const activeClient = clients.find((c) => c.id === clientId);
+  const activeClient = role === "client" ? clientRecord : clients.find((c) => c.id === clientId);
   const data = library && sessions !== null ? { ...library, sessions } : null;
 
   return (
@@ -605,7 +636,7 @@ function CoachAuth({ hasAccount, onCreate, onLogin, onChangeRole }) {
 
   const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 
-  const submitCreate = () => {
+  const submitCreate = async () => {
     setError("");
     if (!emailValid) {
       setError("Adresse mail invalide.");
@@ -619,7 +650,8 @@ function CoachAuth({ hasAccount, onCreate, onLogin, onChangeRole }) {
       setError("Les deux mots de passe ne correspondent pas.");
       return;
     }
-    onCreate(email, password);
+    const result = await onCreate(email, password);
+    if (result && result.status === "error") setError(result.error || "Erreur lors de la création.");
   };
 
   const submitLogin = async () => {
@@ -803,13 +835,17 @@ function ClientLogin({ onLogin, onChoose, onChangeRole }) {
 
   const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 
-  const submit = () => {
+   const [loading, setLoading] = useState(false);
+
+  const submit = async () => {
     setError("");
     if (!emailValid || pin.length !== 4) {
       setError("Renseigne ton adresse mail et ton code à 4 chiffres.");
       return;
     }
-    const result = onLogin(email.trim(), pin);
+    setLoading(true);
+    const result = await onLogin(email.trim(), pin);
+    setLoading(false);
     if (result.status === "ok") {
       onChoose(result.id);
     } else if (result.status === "wrong_pin") {
@@ -846,8 +882,8 @@ function ClientLogin({ onLogin, onChoose, onChangeRole }) {
             onKeyDown={(e) => e.key === "Enter" && submit()}
           />
           {error && <div style={{ color: COLORS.danger, fontSize: 12, marginBottom: 10 }}>{error}</div>}
-          <button style={{ ...styles.primaryBtn, width: "100%" }} onClick={submit}>
-            Accéder à mon suivi
+                  <button style={{ ...styles.primaryBtn, width: "100%" }} onClick={submit} disabled={loading}>
+            {loading ? "Connexion..." : "Accéder à mon suivi"}
           </button>
         </div>
       </div>
@@ -1037,15 +1073,11 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
   const used = offset + sessionsCount;
   const overLimit = total != null && used > total;
 
+   // Load coach auth status for this device
   useEffect(() => {
-    setLocal(profile || {});
-    setDirty(false);
-  }, [profile]);
-
-  if (!profileLoaded) {
-    return <div style={{ ...styles.emptyState, padding: "40px 0" }}>Chargement du profil…</div>;
-  }
-
+    if (getCoachToken()) setCoachAuthed(true);
+    setCoachAuthLoaded(true);
+  }, []);
   const updateField = (key, value) => {
     setLocal((p) => ({ ...p, [key]: value }));
     setDirty(true);
@@ -1207,11 +1239,11 @@ function SuiviView({ data, persistSessions, role, activeClient }) {
   const newSessions = [...data.sessions, session];
   persistSessions(newSessions);
   if (role === "client") {
-    fetch("/api/session-notification", {
+     fetch("/api/session-notification", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${import.meta.env.VITE_ADMIN_PASSWORD}`,
+        Authorization: `Bearer ${getClientToken()}`,
       },
       body: JSON.stringify({
         clientName: activeClient ? activeClient.name : "Un client",
