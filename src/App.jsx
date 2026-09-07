@@ -125,6 +125,7 @@ export default function App() {
   const [coachAccountLoaded, setCoachAccountLoaded] = useState(false);
   const [coachAuthed, setCoachAuthed] = useState(false);
   const [coachAuthLoaded, setCoachAuthLoaded] = useState(false);
+  const [apercuClient, setApercuClient] = useState(false); // le coach voit l'interface comme un client, sans les contrôles d'édition
 
   const [library, setLibrary] = useState(null);
   const [libraryLoaded, setLibraryLoaded] = useState(false);
@@ -319,10 +320,11 @@ useEffect(() => {
     setClientId(id);
     try { await window.storage.set(CLIENT_CHOICE_KEY, id, false); } catch (e) {}
   };
-  const changeClient = () => {
+   const changeClient = () => {
     setClientId(null);
     setClientRecord(null);
     clearClientToken();
+    setApercuClient(false);
     try { window.localStorage.removeItem("musculation-client-record-v1"); } catch (e) {}
   };
 
@@ -484,7 +486,7 @@ useEffect(() => {
     return (
         <ClientSelect
         clients={clients}
-        role={role}
+        role={roleEffectif}
         onChoose={chooseClient}
         onAdd={addClient}
         onDelete={deleteClient}
@@ -494,6 +496,7 @@ useEffect(() => {
   }
 
   const activeClient = role === "client" ? clientRecord : clients.find((c) => c.id === clientId);
+  const roleEffectif = role === "coach" && apercuClient ? "client" : role;
   const data = library && sessions !== null ? { ...library, sessions } : null;
 
   return (
@@ -502,6 +505,8 @@ useEffect(() => {
         role={role}
         view={view}
         setView={setView}
+        apercuClient={apercuClient}
+        onToggleApercuClient={() => setApercuClient((v) => !v)}
         clientName={activeClient ? activeClient.name : ""}
         onChangeClient={changeClient}
         saving={saving}
@@ -518,7 +523,7 @@ useEffect(() => {
                 profileLoaded={profileLoaded}
                 persistProfile={persistProfile}
                 activeClient={activeClient}
-                role={role}
+                role={roleEffectif}
                 sessionsCount={
   (bookings || []).filter(
     (b) => b.status !== "annulee" && new Date(b.start_time) <= new Date()
@@ -533,28 +538,28 @@ bookings={bookings}
               <SuiviView
                 data={data}
                 persistSessions={persistSessions}
-                role={role}
+                role={roleEffectif}
                 activeClient={activeClient}
               />
             )}
             {view === "progression" && <ProgressionView data={data} />}
-            {view === "ct" && <CTView data={data} activeClient={activeClient} clientId={clientId} role={role} persistLibrary={persistLibrary} />}
-            {view === "alimentation" && <AlimentationView clientId={clientId} role={role} data={data} persistLibrary={persistLibrary} activeClient={activeClient} assignMealPlan={assignMealPlan} />}
+            {view === "ct" && <CTView data={data} activeClient={activeClient} clientId={clientId} role={roleEffectif} persistLibrary={persistLibrary} />}
+            {view === "alimentation" && <AlimentationView clientId={clientId} role={roleEffectif} data={data} persistLibrary={persistLibrary} activeClient={activeClient} assignMealPlan={assignMealPlan} />}
             {view === "programmes" && (
               <ProgrammesView
                 data={data}
                 persistLibrary={persistLibrary}
-                role={role}
+                role={roleEffectif}
                 activeClient={activeClient}
                 assignProgram={assignProgram}
                 assignCtProgram={assignCtProgram}
               />
             )}
             {view === "seances" && (
-              <SeanceTypesView data={data} persistLibrary={persistLibrary} role={role} />
+              <SeanceTypesView data={data} persistLibrary={persistLibrary} role={roleEffectif} />
             )}
             {view === "exercices" && (
-              <ExercisesView data={data} persistLibrary={persistLibrary} role={role} />
+              <ExercisesView data={data} persistLibrary={persistLibrary} role={roleEffectif} />
             )}
           </>
         )}
@@ -871,7 +876,7 @@ function ClientLogin({ onLogin, onChoose, onChangeRole }) {
   );
 }
 
-function Header({ role, view, setView, onChangeRole, clientName, onChangeClient, saving, onLogoutCoach }) {
+function Header({ role, view, setView, clientName, onChangeClient, saving, onLogoutCoach, apercuClient, onToggleApercuClient }) {
   const tabs = [
     { id: "profil", label: "Profil" },
     { id: "suivi", label: "Suivi" },
@@ -890,7 +895,12 @@ function Header({ role, view, setView, onChangeRole, clientName, onChangeClient,
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
           {saving && <span style={{ fontSize: 11, color: COLORS.textFaint }}>Enregistrement…</span>}
-                  <span style={styles.roleBadge}>{role === "coach" ? "Coach" : "Client"}</span>
+                        function Headerole === "coach" ? "Coach" : "Client"}</span>
+          {role === "coach" && (
+            <button style={styles.linkBtn} onClick={onToggleApercuClient}>
+              {apercuClient ? "← Revenir en mode coach" : "👁️ Aperçu client"}
+            </button>
+          )}
           {role === "coach" && (
             <button style={styles.linkBtn} onClick={onLogoutCoach}>déconnexion</button>
           )}
@@ -2784,7 +2794,7 @@ function CTView({ data, activeClient, clientId, role, persistLibrary }) {
       </div>
 
       {mode === "tableau" ? (
-        <CTTableView clientId={clientId} role={role} data={data} persistLibrary={persistLibrary} />
+        <CTTableView clientId={clientId} role={roleEffectif} data={data} persistLibrary={persistLibrary} />
       ) : (
       <>
       <p style={{ color: COLORS.textDim, fontSize: 13, marginBottom: 16 }}>
