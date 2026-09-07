@@ -234,13 +234,8 @@ export default function App() {
 
   // Load coach auth status for this device
   useEffect(() => {
-    (async () => {
-      try {
-        const r = await window.storage.get(COACH_AUTH_KEY, false);
-        if (r && r.value === "true") setCoachAuthed(true);
-      } catch (e) {}
-      setCoachAuthLoaded(true);
-    })();
+    if (getCoachToken()) setCoachAuthed(true);
+    setCoachAuthLoaded(true);
   }, []);
 
   useEffect(() => {
