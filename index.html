@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Philémon Musculation</title>
-    <link rel="icon" type="image/png" id="favicon-link" href="/favicon.png" />
+    <link rel="icon" type="image/png" href="/api/musculation-favicon" />
     <link rel="manifest" id="manifest-link" href="/manifest.json" />
     <link rel="apple-touch-icon" id="apple-touch-icon-link" href="/apple-touch-icon.png" />
     <meta name="theme-color" id="theme-color-meta" content="#FF6400" />
@@ -21,7 +21,6 @@
       (function () {
         var estAdmin = window.location.hostname.startsWith("admin.");
         if (estAdmin) {
-          document.getElementById("favicon-link").href = "/favicon-admin.png";
           document.getElementById("manifest-link").href = "/manifest-admin.json";
           document.getElementById("apple-touch-icon-link").href = "/apple-touch-icon-admin.png";
           document.getElementById("theme-color-meta").setAttribute("content", "#C4951B");
