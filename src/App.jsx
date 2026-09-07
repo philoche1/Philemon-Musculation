@@ -1068,11 +1068,7 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
   const used = offset + sessionsCount;
   const overLimit = total != null && used > total;
 
-   // Load coach auth status for this device
-  useEffect(() => {
-    if (getCoachToken()) setCoachAuthed(true);
-    setCoachAuthLoaded(true);
-  }, []);
+  
   const updateField = (key, value) => {
     setLocal((p) => ({ ...p, [key]: value }));
     setDirty(true);
