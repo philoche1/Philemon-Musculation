@@ -141,14 +141,10 @@ export default function App() {
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState(null);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const r = await window.storage.get(ROLE_KEY, false);
-        if (r && r.value) setRole(r.value);
-      } catch (e) {}
-      setRoleLoaded(true);
-    })();
+   useEffect(() => {
+    const estSousDomaineAdmin = window.location.hostname.startsWith("admin.");
+    setRole(estSousDomaineAdmin ? "coach" : "client");
+    setRoleLoaded(true);
   }, []);
   // Restaure la session client mémorisée sur cet appareil (sans jamais redemander le PIN)
   useEffect(() => {
@@ -469,17 +465,14 @@ useEffect(() => {
     );
   }
 
-  if (!role) {
-    return <RoleSelect onChoose={chooseRole} />;
-  }
+
 
   if (role === "coach" && !coachAuthed) {
     return (
-      <CoachAuth
+        <CoachAuth
         hasAccount={!!coachAccount}
         onCreate={createCoachAccount}
         onLogin={loginCoach}
-        onChangeRole={changeRole}
       />
     );
   }
@@ -489,14 +482,13 @@ useEffect(() => {
 
   if (needsClientSelection) {
     return (
-      <ClientSelect
+        <ClientSelect
         clients={clients}
         role={role}
         onChoose={chooseClient}
         onAdd={addClient}
         onDelete={deleteClient}
         onLogin={loginClient}
-        onChangeRole={changeRole}
       />
     );
   }
@@ -506,11 +498,10 @@ useEffect(() => {
 
   return (
     <div style={styles.app}>
-      <Header
+         <Header
         role={role}
         view={view}
         setView={setView}
-        onChangeRole={changeRole}
         clientName={activeClient ? activeClient.name : ""}
         onChangeClient={changeClient}
         saving={saving}
@@ -674,9 +665,7 @@ function CoachAuth({ hasAccount, onCreate, onLogin, onChangeRole }) {
             ? "Identifie-toi pour accéder à tes clients."
             : "Choisis une adresse mail et un mot de passe pour protéger l'accès coach."}
         </p>
-        <div style={{ textAlign: "center", marginBottom: 24 }}>
-          <button style={styles.linkBtn} onClick={onChangeRole}>Je ne suis pas le coach</button>
-        </div>
+       
         <div style={styles.card}>
           <label style={styles.fieldLabel}>Adresse mail</label>
           <input
@@ -751,9 +740,7 @@ function CoachClientPicker({ clients, onChoose, onAdd, onDelete, onChangeRole })
         <p style={{ color: COLORS.textDim, fontFamily: FONT_BODY, fontSize: 13, marginBottom: 8, textAlign: "center" }}>
           Mémorisé sur cet appareil, modifiable à tout moment.
         </p>
-        <div style={{ textAlign: "center", marginBottom: 24 }}>
-          <button style={styles.linkBtn} onClick={onChangeRole}>Je ne suis pas le coach, revenir en arrière</button>
-        </div>
+    
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
         {clients.map((c) => (
   <div key={c.id} style={{ display: "flex", alignItems: "stretch", gap: 8 }}>
@@ -862,9 +849,7 @@ function ClientLogin({ onLogin, onChoose, onChangeRole }) {
         <p style={{ color: COLORS.textDim, fontFamily: FONT_BODY, fontSize: 13, marginBottom: 8, textAlign: "center" }}>
           Ton adresse mail et le code fournis par ton coach.
         </p>
-        <div style={{ textAlign: "center", marginBottom: 24 }}>
-          <button style={styles.linkBtn} onClick={onChangeRole}>Je suis le coach</button>
-        </div>
+     
         <div style={styles.card}>
           <label style={styles.fieldLabel}>Adresse mail</label>
           <input style={styles.textInput} type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="marie@exemple.com" autoFocus />
@@ -905,8 +890,7 @@ function Header({ role, view, setView, onChangeRole, clientName, onChangeClient,
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
           {saving && <span style={{ fontSize: 11, color: COLORS.textFaint }}>Enregistrement…</span>}
-          <span style={styles.roleBadge}>{role === "coach" ? "Coach" : "Client"}</span>
-          <button style={styles.linkBtn} onClick={onChangeRole}>rôle</button>
+                  <span style={styles.roleBadge}>{role === "coach" ? "Coach" : "Client"}</span>
           {role === "coach" && (
             <button style={styles.linkBtn} onClick={onLogoutCoach}>déconnexion</button>
           )}
