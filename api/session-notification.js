@@ -1,9 +1,12 @@
+import { verifyClientToken } from '../src/lib/apiAuth.js';
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end();
-
   const authHeader = req.headers.authorization || '';
   const token = authHeader.replace('Bearer ', '');
-  if (token !== process.env.ADMIN_PASSWORD) {
+
+  const clientId = await verifyClientToken(token);
+  if (!clientId) {
     return res.status(401).json({ error: 'Non autorisé' });
   }
 
@@ -11,13 +14,11 @@ export default async function handler(req, res) {
   if (!clientName || !date) {
     return res.status(400).json({ error: 'Champs manquants' });
   }
-
   const dateFR = new Date(date).toLocaleDateString('fr-FR', {
     weekday: 'long',
     day: 'numeric',
     month: 'long',
   });
-
   try {
     await fetch('https://api.resend.com/emails', {
       method: 'POST',
@@ -36,6 +37,5 @@ export default async function handler(req, res) {
     console.error('Erreur envoi email', e);
     return res.status(500).json({ error: "L'email n'a pas pu être envoyé" });
   }
-
   res.status(200).json({ success: true });
 }
