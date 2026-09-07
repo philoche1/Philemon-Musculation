@@ -4,13 +4,30 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Philémon Musculation</title>
-    <link rel="icon" type="image/png" href="/favicon2.png" />
+    <link rel="icon" type="image/png" id="favicon-link" href="/favicon.png" />
+    <link rel="manifest" id="manifest-link" href="/manifest.json" />
+    <link rel="apple-touch-icon" id="apple-touch-icon-link" href="/apple-touch-icon.png" />
+    <meta name="theme-color" id="theme-color-meta" content="#FF6400" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Musculation" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap"
       rel="stylesheet"
     />
+    <script>
+      (function () {
+        var estAdmin = window.location.hostname.startsWith("admin.");
+        if (estAdmin) {
+          document.getElementById("favicon-link").href = "/favicon-admin.png";
+          document.getElementById("manifest-link").href = "/manifest-admin.json";
+          document.getElementById("apple-touch-icon-link").href = "/apple-touch-icon-admin.png";
+          document.getElementById("theme-color-meta").setAttribute("content", "#C4951B");
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
