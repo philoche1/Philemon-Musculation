@@ -1153,7 +1153,12 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
             ))}
           </div>
         )}
-                {isCoach && (
+                               <div style={{ fontSize: 12, color: COLORS.textDim, marginBottom: isCoach ? 6 : 12 }}>
+          Format des séances : <strong style={{ color: COLORS.text }}>
+            {(activeClient.typeSeance || "1h") === "30min" ? "30 minutes" : (activeClient.typeSeance || "1h") === "1h" ? "1 heure" : "1 heure 30"}
+          </strong>
+        </div>
+        {isCoach && (
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
             {Object.keys(LIENS_CALENDLY).map((t) => (
               <button
