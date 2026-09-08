@@ -12,6 +12,8 @@ const URL_REDIRECTION_AVIS = 'https://suivi.philemon-musculation.com/api/avis';
 
 const CLIENTS_KEY = 'clients-v1';
 const bookingsKey = (clientId) => `calendly-bookings-v1-${clientId}`;
+const COACH_ACCOUNT_KEY = 'coach-account-v1';
+const WEBHOOK_ALERTS_KEY = 'calendly-webhook-alerts-v1';
 
 // --- Petits helpers pour lire/écrire dans la table kv_store, en bypassant
 // les policies RLS grâce à la clé service_role (contrairement à storage.js
@@ -60,7 +62,8 @@ export default async function handler(req, res) {
   );
 
   if (!client) {
-    // Aucun compte client trouvé pour cet email — on ignore silencieusement
+    // Aucun compte client trouvé pour cet email — on historise et on alerte le coach
+    await alerterEmailInconnu(email, eventType, startTime);
     return res.status(200).json({ ignored: true, reason: 'client inconnu' });
   }
 
@@ -124,4 +127,37 @@ async function verifierEtEnvoyerRelanceAvis(client, clients) {
       : c
   );
   await kvSet(CLIENTS_KEY, newClients);
+}
+
+async function alerterEmailInconnu(emailInconnu, eventType, startTime) {
+  // Historise l'événement pour garder une trace consultable plus tard
+  const alerts = (await kvGet(WEBHOOK_ALERTS_KEY)) || [];
+  alerts.unshift({
+    email: emailInconnu,
+    eventType,
+    startTime,
+    detectedAt: new Date().toISOString(),
+  });
+  await kvSet(WEBHOOK_ALERTS_KEY, alerts.slice(0, 100)); // garde les 100 derniers
+
+  // Envoie un mail immédiat au coach
+  const account = await kvGet(COACH_ACCOUNT_KEY);
+  const coachEmail = account?.email;
+  if (!coachEmail) return;
+
+  try {
+    await resend.emails.send({
+      from: process.env.RESEND_FROM_EMAIL,
+      to: coachEmail,
+      subject: '⚠️ Réservation Calendly non reconnue (Musculation)',
+      html: `
+        <p>Une réservation Calendly est arrivée avec une adresse mail qui ne correspond à aucun client enregistré.</p>
+        <p><strong>Email utilisé :</strong> ${emailInconnu}</p>
+        <p><strong>Créneau réservé :</strong> ${startTime ? new Date(startTime).toLocaleString('fr-FR') : 'inconnu'}</p>
+        <p>Vérifie l'adresse mail enregistrée dans la fiche du client concerné et corrige-la si besoin, sinon sa réservation ne sera pas liée à son suivi.</p>
+      `,
+    });
+  } catch (e) {
+    // On ne bloque jamais le webhook si l'email d'alerte échoue
+  }
 }
