@@ -500,13 +500,13 @@ useEffect(() => {
 
   // Permet au coach d'ajouter manuellement une séance faite hors Calendly
   // (ex: séance découverte réglée en direct), pour qu'elle compte dans le pack.
-  const addManualBooking = useCallback(async (dateTimeISO) => {
+  const addManualBooking = useCallback(async (dateTimeISO, status) => {
     if (!clientId) return;
     setSaving(true);
     const newBooking = {
       uri: uid("manual"),
       start_time: dateTimeISO,
-      status: "reservee",
+      status: status || "effectuee",
       manual: true,
     };
     const newBookings = [...(bookings || []), newBooking];
@@ -516,6 +516,23 @@ useEffect(() => {
       setToast("Séance ajoutée");
     } catch (e) {
       setToast("Erreur d'enregistrement, réessaie");
+    }
+    setSaving(false);
+    setTimeout(() => setToast(null), 1800);
+  }, [clientId, bookings]);
+
+  // Supprime une séance ajoutée manuellement (les réservations Calendly ne
+  // peuvent pas être supprimées ici, seulement annulées depuis Calendly)
+  const deleteManualBooking = useCallback(async (uri) => {
+    if (!clientId) return;
+    setSaving(true);
+    const newBookings = (bookings || []).filter((b) => b.uri !== uri);
+    setBookings(newBookings);
+    try {
+      await window.storage.set(bookingsKey(clientId), JSON.stringify(newBookings), true);
+      setToast("Séance supprimée");
+    } catch (e) {
+      setToast("Erreur de suppression, réessaie");
     }
     setSaving(false);
     setTimeout(() => setToast(null), 1800);
@@ -602,6 +619,7 @@ bookings={bookings}
                 assignAccompagnement={assignAccompagnement}
                 setAccompagnementOffset={setAccompagnementOffset}
                 addManualBooking={addManualBooking}
+                deleteManualBooking={deleteManualBooking}
               />
             )}
             {view === "suivi" && (
@@ -1138,14 +1156,14 @@ function groupExIdsByZoneMulti(exIds, exercises) {
   return order.map((label) => [label, byZone[label]]);
 }
 
-function ProfileView({ profile, profileLoaded, persistProfile, activeClient, role, sessionsCount, bookings, assignAccompagnement, setAccompagnementOffset, assignTypeSeance, addManualBooking }) {
+function ProfileView({ profile, profileLoaded, persistProfile, activeClient, role, sessionsCount, bookings, assignAccompagnement, setAccompagnementOffset, assignTypeSeance, addManualBooking, deleteManualBooking }) {
   const [local, setLocal] = useState(profile || {});
   const [dirty, setDirty] = useState(false);
   const [editingOffset, setEditingOffset] = useState(false);
   const [offsetInput, setOffsetInput] = useState("");
   const [showManualBooking, setShowManualBooking] = useState(false);
-  const [manualDate, setManualDate] = useState(todayISO());
-  const [manualTime, setManualTime] = useState("12:00");
+  const [manualDateTime, setManualDateTime] = useState("");
+  const [manualStatus, setManualStatus] = useState("effectuee");
   const isCoach = role === "coach";
   const accompagnementOptions = [5, 10, 20, 40];
   const total = activeClient ? activeClient.accompagnementTotal : null;
@@ -1171,10 +1189,12 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
   };
 
   const submitManualBooking = () => {
-    if (!manualDate || !manualTime) return;
-    const isoString = new Date(`${manualDate}T${manualTime}:00`).toISOString();
-    addManualBooking(isoString);
+    if (!manualDateTime) return;
+    const isoString = new Date(manualDateTime).toISOString();
+    addManualBooking(isoString, manualStatus);
     setShowManualBooking(false);
+    setManualDateTime("");
+    setManualStatus("effectuee");
   };
 
   return (
@@ -1298,36 +1318,41 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
         <div style={{ marginBottom: 16 }}>
           {!showManualBooking ? (
             <button style={styles.secondaryBtn} onClick={() => setShowManualBooking(true)}>
-              + Ajouter une séance manuellement
+              + Ajouter une séance à l'historique
             </button>
           ) : (
             <div style={styles.card}>
-              <div style={{ fontSize: 13, color: COLORS.textDim, marginBottom: 10 }}>
-                Ajouter une séance faite hors Calendly (ex: séance découverte), pour qu'elle compte dans le pack.
+              <div style={{ fontFamily: FONT_DISPLAY, fontSize: 15, color: COLORS.text, marginBottom: 6 }}>
+                Ajouter une séance à l'historique
               </div>
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
-                <div style={{ flex: "1 1 150px" }}>
-                  <label style={styles.fieldLabel}>Date</label>
+              <div style={{ fontSize: 12, color: COLORS.textFaint, marginBottom: 14 }}>
+                Utile pour une séance d'essai faite avant la création du compte, ou toute séance non enregistrée automatiquement.
+              </div>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12, alignItems: "flex-end" }}>
+                <div style={{ flex: "1 1 220px" }}>
+                  <label style={styles.fieldLabel}>Date et heure</label>
                   <input
-                    type="date"
-                    value={manualDate}
-                    onChange={(e) => setManualDate(e.target.value)}
+                    type="datetime-local"
+                    value={manualDateTime}
+                    onChange={(e) => setManualDateTime(e.target.value)}
                     style={{ ...styles.textInput, marginBottom: 0 }}
                   />
                 </div>
-                <div style={{ flex: "1 1 120px" }}>
-                  <label style={styles.fieldLabel}>Heure</label>
-                  <input
-                    type="time"
-                    value={manualTime}
-                    onChange={(e) => setManualTime(e.target.value)}
+                <div style={{ flex: "0 0 140px" }}>
+                  <label style={styles.fieldLabel}>Statut</label>
+                  <select
+                    value={manualStatus}
+                    onChange={(e) => setManualStatus(e.target.value)}
                     style={{ ...styles.textInput, marginBottom: 0 }}
-                  />
+                  >
+                    <option value="effectuee">Effectuée</option>
+                    <option value="annulee">Annulée</option>
+                  </select>
                 </div>
               </div>
               <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
                 <button style={styles.secondaryBtn} onClick={() => setShowManualBooking(false)}>Annuler</button>
-                <button style={styles.primaryBtn} onClick={submitManualBooking}>Ajouter la séance</button>
+                <button style={styles.primaryBtn} disabled={!manualDateTime} onClick={submitManualBooking}>Ajouter</button>
               </div>
             </div>
           )}
@@ -1358,6 +1383,11 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
           .slice()
           .sort((a, b) => new Date(b.start_time) - new Date(a.start_time));
         if (historique.length === 0) return null;
+        const STATUT_LABELS = {
+          annulee: { label: "Annulée", bg: "rgba(255,107,107,0.14)", color: COLORS.danger },
+          reservee: { label: "Réservée", bg: "rgba(255,176,102,0.14)", color: COLORS.accent2 },
+          effectuee: { label: "Effectuée", bg: "rgba(92,184,92,0.14)", color: "#5CB85C" },
+        };
         return (
           <div style={{ ...styles.card, marginBottom: 16, padding: 0, overflow: "hidden" }}>
             <div style={{ fontSize: 11, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, padding: "16px 16px 0 16px" }}>
@@ -1369,11 +1399,12 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
                   <tr>
                     <th style={styles.th}>Date</th>
                     <th style={styles.th}>Statut</th>
+                    {isCoach && <th style={styles.th}></th>}
                   </tr>
                 </thead>
                 <tbody>
                   {historique.map((b, i) => {
-                    const annulee = b.status === "annulee";
+                    const statut = STATUT_LABELS[b.status] || STATUT_LABELS.reservee;
                     return (
                       <tr key={i}>
                         <td style={styles.td}>
@@ -1386,13 +1417,29 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
                               padding: "3px 10px",
                               borderRadius: 20,
                               fontWeight: 600,
-                              background: annulee ? "rgba(255,107,107,0.14)" : "rgba(255,176,102,0.14)",
-                              color: annulee ? COLORS.danger : COLORS.accent2,
+                              background: statut.bg,
+                              color: statut.color,
                             }}
                           >
-                            {annulee ? "Annulée" : "Réservée"}
+                            {statut.label}
                           </span>
                         </td>
+                        {isCoach && (
+                          <td style={styles.td}>
+                            {b.manual && (
+                              <button
+                                style={styles.dangerLinkBtn}
+                                onClick={() => {
+                                  if (window.confirm("Supprimer cette séance de l'historique ?")) {
+                                    deleteManualBooking(b.uri);
+                                  }
+                                }}
+                              >
+                                Supprimer
+                              </button>
+                            )}
+                          </td>
+                        )}
                       </tr>
                     );
                   })}
