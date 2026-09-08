@@ -498,6 +498,29 @@ useEffect(() => {
     setTimeout(() => setToast(null), 1800);
   }, [clientId]);
 
+  // Permet au coach d'ajouter manuellement une séance faite hors Calendly
+  // (ex: séance découverte réglée en direct), pour qu'elle compte dans le pack.
+  const addManualBooking = useCallback(async (dateTimeISO) => {
+    if (!clientId) return;
+    setSaving(true);
+    const newBooking = {
+      uri: uid("manual"),
+      start_time: dateTimeISO,
+      status: "reservee",
+      manual: true,
+    };
+    const newBookings = [...(bookings || []), newBooking];
+    setBookings(newBookings);
+    try {
+      await window.storage.set(bookingsKey(clientId), JSON.stringify(newBookings), true);
+      setToast("Séance ajoutée");
+    } catch (e) {
+      setToast("Erreur d'enregistrement, réessaie");
+    }
+    setSaving(false);
+    setTimeout(() => setToast(null), 1800);
+  }, [clientId, bookings]);
+
   const notReady =
     !roleLoaded || !clientChoiceLoaded || !coachAccountLoaded || !coachAuthLoaded ||
     (role === "coach" && coachAuthed && !clientsLoaded);
@@ -578,6 +601,7 @@ useEffect(() => {
 bookings={bookings} 
                 assignAccompagnement={assignAccompagnement}
                 setAccompagnementOffset={setAccompagnementOffset}
+                addManualBooking={addManualBooking}
               />
             )}
             {view === "suivi" && (
@@ -1114,11 +1138,14 @@ function groupExIdsByZoneMulti(exIds, exercises) {
   return order.map((label) => [label, byZone[label]]);
 }
 
-function ProfileView({ profile, profileLoaded, persistProfile, activeClient, role, sessionsCount, bookings, assignAccompagnement, setAccompagnementOffset, assignTypeSeance }) {
+function ProfileView({ profile, profileLoaded, persistProfile, activeClient, role, sessionsCount, bookings, assignAccompagnement, setAccompagnementOffset, assignTypeSeance, addManualBooking }) {
   const [local, setLocal] = useState(profile || {});
   const [dirty, setDirty] = useState(false);
   const [editingOffset, setEditingOffset] = useState(false);
   const [offsetInput, setOffsetInput] = useState("");
+  const [showManualBooking, setShowManualBooking] = useState(false);
+  const [manualDate, setManualDate] = useState(todayISO());
+  const [manualTime, setManualTime] = useState("12:00");
   const isCoach = role === "coach";
   const accompagnementOptions = [5, 10, 20, 40];
   const total = activeClient ? activeClient.accompagnementTotal : null;
@@ -1141,6 +1168,13 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
     const n = Math.max(0, Math.round(Number(offsetInput)) || 0);
     setAccompagnementOffset(n);
     setEditingOffset(false);
+  };
+
+  const submitManualBooking = () => {
+    if (!manualDate || !manualTime) return;
+    const isoString = new Date(`${manualDate}T${manualTime}:00`).toISOString();
+    addManualBooking(isoString);
+    setShowManualBooking(false);
   };
 
   return (
@@ -1259,6 +1293,46 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
           </div>
         )}
       </div>
+
+      {isCoach && (
+        <div style={{ marginBottom: 16 }}>
+          {!showManualBooking ? (
+            <button style={styles.secondaryBtn} onClick={() => setShowManualBooking(true)}>
+              + Ajouter une séance manuellement
+            </button>
+          ) : (
+            <div style={styles.card}>
+              <div style={{ fontSize: 13, color: COLORS.textDim, marginBottom: 10 }}>
+                Ajouter une séance faite hors Calendly (ex: séance découverte), pour qu'elle compte dans le pack.
+              </div>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
+                <div style={{ flex: "1 1 150px" }}>
+                  <label style={styles.fieldLabel}>Date</label>
+                  <input
+                    type="date"
+                    value={manualDate}
+                    onChange={(e) => setManualDate(e.target.value)}
+                    style={{ ...styles.textInput, marginBottom: 0 }}
+                  />
+                </div>
+                <div style={{ flex: "1 1 120px" }}>
+                  <label style={styles.fieldLabel}>Heure</label>
+                  <input
+                    type="time"
+                    value={manualTime}
+                    onChange={(e) => setManualTime(e.target.value)}
+                    style={{ ...styles.textInput, marginBottom: 0 }}
+                  />
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+                <button style={styles.secondaryBtn} onClick={() => setShowManualBooking(false)}>Annuler</button>
+                <button style={styles.primaryBtn} onClick={submitManualBooking}>Ajouter la séance</button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {(() => {
         const upcoming = (bookings || [])
