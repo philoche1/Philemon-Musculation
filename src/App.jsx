@@ -233,10 +233,28 @@ export default function App() {
     })();
   }, []);
 
-  // Load coach auth status for this device
+   // Load coach auth status for this device — vérifié auprès du serveur, pas juste sa présence locale
   useEffect(() => {
-    if (getCoachToken()) setCoachAuthed(true);
-    setCoachAuthLoaded(true);
+    (async () => {
+      const token = getCoachToken();
+      if (token) {
+        try {
+          const res = await fetch("/api/musculation-coach-login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "verify", token }),
+          });
+          if (res.ok) {
+            setCoachAuthed(true);
+          } else {
+            clearCoachToken();
+          }
+        } catch (e) {
+          clearCoachToken();
+        }
+      }
+      setCoachAuthLoaded(true);
+    })();
   }, []);
 
   useEffect(() => {
