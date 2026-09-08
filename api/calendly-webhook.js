@@ -43,6 +43,11 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end();
 
   const event = req.body;
+
+  // --- LOGS DE DIAGNOSTIC TEMPORAIRES : à retirer une fois le problème identifié ---
+  console.log('DEBUG webhook body reçu :', JSON.stringify(event));
+  // --- FIN LOGS DE DIAGNOSTIC ---
+
   const eventType = event.event; // 'invitee.created' ou 'invitee.canceled'
   const payload = event.payload;
   const email = payload?.email;
@@ -51,7 +56,10 @@ export default async function handler(req, res) {
   const cancelUrl = payload?.cancel_url;
   const rescheduleUrl = payload?.reschedule_url;
 
+  console.log('DEBUG valeurs extraites :', { eventType, email, startTime, eventUri });
+
   if (!email || !startTime) {
+    console.log('DEBUG rejet 400 : email ou startTime manquant');
     return res.status(400).json({ error: 'Données Calendly incomplètes' });
   }
 
@@ -61,6 +69,8 @@ export default async function handler(req, res) {
     (c) => (c.email || '').trim().toLowerCase() === email.trim().toLowerCase()
   );
 
+  console.log('DEBUG client trouvé ?', client ? client.id : 'AUCUN', '- email recherché :', email);
+
   if (!client) {
     // Aucun compte client trouvé pour cet email — on historise et on alerte le coach
     await alerterEmailInconnu(email, eventType, startTime);
@@ -68,6 +78,8 @@ export default async function handler(req, res) {
   }
 
   const bookings = (await kvGet(bookingsKey(client.id))) || [];
+
+  console.log('DEBUG eventType est-il invitee.created ?', eventType === 'invitee.created');
 
   if (eventType === 'invitee.created') {
     bookings.push({
@@ -78,6 +90,7 @@ export default async function handler(req, res) {
       reschedule_url: rescheduleUrl || null,
     });
     await kvSet(bookingsKey(client.id), bookings);
+    console.log('DEBUG réservation écrite pour client', client.id);
     await verifierEtEnvoyerRelanceAvis(client, clients);
   }
 
@@ -158,6 +171,6 @@ async function alerterEmailInconnu(emailInconnu, eventType, startTime) {
       `,
     });
   } catch (e) {
-    // On ne bloque jamais le webhook si l'email d'alerte échoue
+    console.log('DEBUG échec envoi email alerte :', e.message);
   }
 }
