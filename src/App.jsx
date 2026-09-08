@@ -2794,7 +2794,7 @@ function CTView({ data, activeClient, clientId, role, persistLibrary }) {
       </div>
 
       {mode === "tableau" ? (
-        <CTTableView clientId={clientId} role={roleEffectif} data={data} persistLibrary={persistLibrary} />
+                <CTTableView clientId={clientId} role={role} data={data} persistLibrary={persistLibrary} />
       ) : (
       <>
       <p style={{ color: COLORS.textDim, fontSize: 13, marginBottom: 16 }}>
