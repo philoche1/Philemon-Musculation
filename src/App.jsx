@@ -20,7 +20,11 @@ const bookingsKey = (clientId) => `calendly-bookings-v1-${clientId}`;
 function uid(prefix) {
   return prefix + Math.random().toString(36).slice(2, 9);
 }
-
+const LIENS_CALENDLY = {
+  "30min": "https://calendly.com/philemon-stordeur/philemon-musculation-30min",
+  "1h": "https://calendly.com/philemon-stordeur/philemon-musculation-1h",
+  "1h30": "https://calendly.com/philemon-stordeur/philemon-musculation-1h30",
+};
 const PROFILE_FIELDS = [
   { key: "passeSportif", label: "Passé sportif, activité" },
   { key: "presentSportif", label: "Présent sportif, activité" },
@@ -328,8 +332,8 @@ useEffect(() => {
     try { window.localStorage.removeItem("musculation-client-record-v1"); } catch (e) {}
   };
 
-  const addClient = async (name, email, pin) => {
-    const newClient = { id: uid("client"), name, email, pin };
+   const addClient = async (name, email, pin, typeSeance) => {
+    const newClient = { id: uid("client"), name, email, pin, typeSeance: typeSeance || "1h" };
     const newClients = [...(clients || []), newClient];
     setClients(newClients);
     try { await window.storage.set(CLIENTS_KEY, JSON.stringify(newClients), true); } catch (e) {}
@@ -412,7 +416,14 @@ useEffect(() => {
     setClients(newClients);
     try { await window.storage.set(CLIENTS_KEY, JSON.stringify(newClients), true); } catch (e) {}
   }, [clientId, clients]);
-
+  const assignTypeSeance = useCallback(async (typeSeance) => {
+    if (!clientId) return;
+    const newClients = clients.map((c) =>
+      c.id === clientId ? { ...c, typeSeance: typeSeance || null } : c
+    );
+    setClients(newClients);
+    try { await window.storage.set(CLIENTS_KEY, JSON.stringify(newClients), true); } catch (e) {}
+  }, [clientId, clients]);
   const persistLibrary = useCallback(async (newLib) => {
     setSaving(true);
     setLibrary(newLib);
@@ -517,13 +528,14 @@ useEffect(() => {
           <div style={{ ...styles.emptyState, padding: "60px 0" }}>Chargement des données du client…</div>
         ) : (
           <>
-            {view === "profil" && (
+                      {view === "profil" && (
               <ProfileView
                 profile={profile}
                 profileLoaded={profileLoaded}
                 persistProfile={persistProfile}
                 activeClient={activeClient}
                 role={roleEffectif}
+                assignTypeSeance={assignTypeSeance}
                 sessionsCount={
   (bookings || []).filter(
     (b) => b.status !== "annulee" && new Date(b.start_time) <= new Date()
@@ -722,15 +734,17 @@ function ClientSelect({ clients, role, onChoose, onAdd, onDelete, onLogin, onCha
 
 function CoachClientPicker({ clients, onChoose, onAdd, onDelete, onChangeRole }) {
   const [showAdd, setShowAdd] = useState(clients.length === 0);
-  const [name, setName] = useState("");
+   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [pin, setPin] = useState(() => String(Math.floor(1000 + Math.random() * 9000)));
+  const [typeSeance, setTypeSeance] = useState("1h");
 
   const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 
   const create = () => {
     if (!name.trim() || !emailValid || pin.length !== 4) return;
-    onAdd(name.trim(), email.trim().toLowerCase(), pin);
+    onAdd(name.trim(), email.trim().toLowerCase(), pin, typeSeance);
+  };
   };
 
   return (
@@ -793,12 +807,19 @@ function CoachClientPicker({ clients, onChoose, onAdd, onDelete, onChangeRole })
               onChange={(e) => setEmail(e.target.value)}
               placeholder="marie@exemple.com"
             />
-            <label style={styles.fieldLabel}>Code d'accès à 4 chiffres (à communiquer au client)</label>
+                        <label style={styles.fieldLabel}>Code d'accès à 4 chiffres (à communiquer au client)</label>
             <input
               style={styles.textInput}
               value={pin}
               onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 4))}
               inputMode="numeric"
+            />
+            <label style={styles.fieldLabel}>Format des séances</label>
+            <select value={typeSeance} onChange={(e) => setTypeSeance(e.target.value)} style={styles.textInput}>
+              <option value="30min">30 minutes</option>
+              <option value="1h">1 heure</option>
+              <option value="1h30">1 heure 30</option>
+            </select>
             />
             <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
               {clients.length > 0 && (
@@ -1050,7 +1071,7 @@ function groupExIdsByZoneMulti(exIds, exercises) {
   return order.map((label) => [label, byZone[label]]);
 }
 
-function ProfileView({ profile, profileLoaded, persistProfile, activeClient, role, sessionsCount, bookings, assignAccompagnement, setAccompagnementOffset }) {
+function ProfileView({ profile, profileLoaded, persistProfile, activeClient, role, sessionsCount, bookings, assignAccompagnement, setAccompagnementOffset, assignTypeSeance }) {
   const [local, setLocal] = useState(profile || {});
   const [dirty, setDirty] = useState(false);
   const [editingOffset, setEditingOffset] = useState(false);
@@ -1115,6 +1136,22 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
             ))}
           </div>
         )}
+                {isCoach && (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+            {Object.keys(LIENS_CALENDLY).map((t) => (
+              <button
+                key={t}
+                onClick={() => assignTypeSeance(t)}
+                style={{
+                  ...styles.secondaryBtn,
+                  ...((activeClient.typeSeance || "1h") === t ? { background: COLORS.accent2, color: COLORS.bg, borderColor: COLORS.accent2 } : {}),
+                }}
+              >
+                {t === "30min" ? "30 minutes" : t === "1h" ? "1 heure" : "1 heure 30"}
+              </button>
+            ))}
+          </div>
+        )}
         {total ? (
           <div>
             <div style={{ fontFamily: FONT_DISPLAY, fontSize: 24, color: overLimit ? COLORS.danger : COLORS.text }}>
@@ -1148,11 +1185,25 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
                 )}
               </div>
             )}
-            {overLimit && (
+                        {overLimit && (
               <div style={{ marginTop: 8, padding: "8px 12px", background: "rgba(255,107,107,0.1)", border: `1px solid ${COLORS.danger}`, borderRadius: 8, fontSize: 12, color: COLORS.danger, fontWeight: 600 }}>
                 ⚠️ Le forfait est dépassé — pense à renouveler l'accompagnement.
               </div>
             )}
+            
+                      
+              href={LIENS_CALENDLY[activeClient.typeSeance || "1h"]}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                ...styles.primaryBtn,
+                display: "inline-block",
+                textDecoration: "none",
+                marginTop: 12,
+              }}
+            >
+              Réserver un créneau
+            </a>
           </div>
         ) : (
           <div style={{ fontSize: 13, color: COLORS.textFaint }}>
