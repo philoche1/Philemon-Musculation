@@ -1190,7 +1190,7 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
               </div>
             )}
             
-                      
+             <a         
               href={LIENS_CALENDLY[activeClient.typeSeance || "1h"]}
               target="_blank"
               rel="noopener noreferrer"
