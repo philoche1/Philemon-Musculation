@@ -820,7 +820,7 @@ function CoachClientPicker({ clients, onChoose, onAdd, onDelete, onChangeRole })
               <option value="1h">1 heure</option>
               <option value="1h30">1 heure 30</option>
             </select>
-            />
+        
             <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
               {clients.length > 0 && (
                 <button style={styles.secondaryBtn} onClick={() => setShowAdd(false)}>Annuler</button>
