@@ -745,7 +745,6 @@ function CoachClientPicker({ clients, onChoose, onAdd, onDelete, onChangeRole })
     if (!name.trim() || !emailValid || pin.length !== 4) return;
     onAdd(name.trim(), email.trim().toLowerCase(), pin, typeSeance);
   };
-  };
 
   return (
     <div style={{ ...styles.app, alignItems: "center", justifyContent: "center", display: "flex", minHeight: "100%" }}>
