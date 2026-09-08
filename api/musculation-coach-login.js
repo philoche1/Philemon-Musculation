@@ -21,7 +21,7 @@ async function setValue(key, value) {
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end();
 
-  const { action, email, password } = req.body;
+  const { action, email, password, token } = req.body;
 
   const accountRaw = await getValue('coach-account-v1');
   const account = accountRaw ? JSON.parse(accountRaw) : null;
@@ -57,6 +57,15 @@ export default async function handler(req, res) {
     await setValue(`coach-session-v1-${token}`, JSON.stringify({ expiresAt: Date.now() + SESSION_DURATION_MS }));
     return res.status(200).json({ status: 'ok', token });
   }
-
+  if (action === 'verify') {
+    if (!token) return res.status(401).json({ status: 'invalid' });
+    const sessionRaw = await getValue(`coach-session-v1-${token}`);
+    if (!sessionRaw) return res.status(401).json({ status: 'invalid' });
+    const session = JSON.parse(sessionRaw);
+    if (session.expiresAt < Date.now()) {
+      return res.status(401).json({ status: 'expired' });
+    }
+    return res.status(200).json({ status: 'ok' });
+  }
   return res.status(400).json({ error: 'Action inconnue' });
 }
