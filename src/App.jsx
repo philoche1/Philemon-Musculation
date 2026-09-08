@@ -366,6 +366,21 @@ useEffect(() => {
     await chooseClient(newClient.id);
     return newClient;
   };
+
+  const renvoyerEmailBienvenue = async (client) => {
+    try {
+      await fetch("/api/welcome-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${getCoachToken()}` },
+        body: JSON.stringify({ name: client.name, email: client.email, pin: client.pin }),
+      });
+      setToast("Email envoyé");
+    } catch (e) {
+      setToast("Erreur d'envoi, réessaie");
+    }
+    setTimeout(() => setToast(null), 1800);
+  };
+
   const deleteClient = async (id) => {
   const newClients = (clients || []).filter((c) => c.id !== id);
   setClients(newClients);
@@ -520,6 +535,7 @@ useEffect(() => {
         onAdd={addClient}
         onDelete={deleteClient}
         onLogin={loginClient}
+        onResendWelcome={renvoyerEmailBienvenue}
       />
     );
   }
@@ -743,14 +759,14 @@ function CoachAuth({ hasAccount, onCreate, onLogin, onChangeRole }) {
   );
 }
 
-function ClientSelect({ clients, role, onChoose, onAdd, onDelete, onLogin, onChangeRole }) {
+function ClientSelect({ clients, role, onChoose, onAdd, onDelete, onLogin, onChangeRole, onResendWelcome }) {
   if (role === "coach") {
-    return <CoachClientPicker clients={clients} onChoose={onChoose} onAdd={onAdd} onDelete={onDelete} onChangeRole={onChangeRole} />;
+    return <CoachClientPicker clients={clients} onChoose={onChoose} onAdd={onAdd} onDelete={onDelete} onChangeRole={onChangeRole} onResendWelcome={onResendWelcome} />;
   }
   return <ClientLogin onLogin={onLogin} onChoose={onChoose} onChangeRole={onChangeRole} />;
 }
 
-function CoachClientPicker({ clients, onChoose, onAdd, onDelete, onChangeRole }) {
+function CoachClientPicker({ clients, onChoose, onAdd, onDelete, onChangeRole, onResendWelcome }) {
   const [showAdd, setShowAdd] = useState(clients.length === 0);
    const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -789,6 +805,16 @@ function CoachClientPicker({ clients, onChoose, onAdd, onDelete, onChangeRole })
         <span style={{ display: "block", fontSize: 11, color: COLORS.textDim }}>{c.email}</span>
         <span style={{ display: "block", fontSize: 11, color: COLORS.textFaint }}>Code d'accès client : {c.pin}</span>
       </span>
+    </button>
+    <button
+      style={{ ...styles.secondaryBtn, padding: "0 14px" }}
+      onClick={(e) => {
+        e.stopPropagation();
+        onResendWelcome(c);
+      }}
+      title="Renvoyer l'email de bienvenue"
+    >
+      📧
     </button>
     <button
       style={{ ...styles.secondaryBtn, color: "#ff6b6b", borderColor: "#ff6b6b", padding: "0 14px" }}
@@ -1252,6 +1278,57 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
           </div>
         );
       })()}
+
+      {(() => {
+        const historique = (bookings || [])
+          .slice()
+          .sort((a, b) => new Date(b.start_time) - new Date(a.start_time));
+        if (historique.length === 0) return null;
+        return (
+          <div style={{ ...styles.card, marginBottom: 16, padding: 0, overflow: "hidden" }}>
+            <div style={{ fontSize: 11, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, padding: "16px 16px 0 16px" }}>
+              Historique des séances
+            </div>
+            <div style={{ overflowX: "auto" }}>
+              <table style={styles.table}>
+                <thead>
+                  <tr>
+                    <th style={styles.th}>Date</th>
+                    <th style={styles.th}>Statut</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {historique.map((b, i) => {
+                    const annulee = b.status === "annulee";
+                    return (
+                      <tr key={i}>
+                        <td style={styles.td}>
+                          {new Date(b.start_time).toLocaleString("fr-FR", { day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                        </td>
+                        <td style={styles.td}>
+                          <span
+                            style={{
+                              fontSize: 12,
+                              padding: "3px 10px",
+                              borderRadius: 20,
+                              fontWeight: 600,
+                              background: annulee ? "rgba(255,107,107,0.14)" : "rgba(255,176,102,0.14)",
+                              color: annulee ? COLORS.danger : COLORS.accent2,
+                            }}
+                          >
+                            {annulee ? "Annulée" : "Réservée"}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      })()}
+
       <p style={{ color: COLORS.textDim, fontSize: 13, marginBottom: 16 }}>
         Ces informations aident le coach à personnaliser le suivi. Modifiable par le coach comme par le client.
       </p>
