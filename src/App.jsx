@@ -486,7 +486,7 @@ useEffect(() => {
     return (
         <ClientSelect
         clients={clients}
-        role={roleEffectif}
+                    role={role}
         onChoose={chooseClient}
         onAdd={addClient}
         onDelete={deleteClient}
