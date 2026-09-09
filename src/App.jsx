@@ -111,6 +111,41 @@ function makeEntries(exerciceIds, exercisesMap) {
   return entries;
 }
 
+// Retrouve les valeurs (reps/charge) de la dernière séance du MÊME type
+// (même nom) faite par ce client, pour pré-remplir la nouvelle séance au
+// lieu de valeurs par défaut arbitraires.
+function getPreviousEntriesSameSeance(allSessions, seanceNom, excludeSessionId) {
+  if (!seanceNom) return null;
+  const candidats = (allSessions || [])
+    .map((s, idx) => ({ s, idx }))
+    .filter(({ s }) => s.id !== excludeSessionId && s.seanceNom === seanceNom)
+    .sort((a, b) => {
+      if (a.s.date !== b.s.date) return a.s.date < b.s.date ? 1 : -1;
+      return b.idx - a.idx;
+    });
+  if (candidats.length === 0) return null;
+  const map = {};
+  candidats[0].s.entries.forEach((e) => {
+    map[e.exerciceId + "_" + e.serie] = { reps: e.reps, charge: e.charge };
+  });
+  return map;
+}
+
+// Applique les valeurs de la dernière séance identique (si elle existe) sur
+// un tableau d'entries fraîchement généré par makeEntries, et initialise le
+// statut "validée" de chaque série à false.
+function applyPreviousEntries(entries, previousMap) {
+  return entries.map((e) => {
+    const prev = previousMap ? previousMap[e.exerciceId + "_" + e.serie] : null;
+    return {
+      ...e,
+      reps: prev && prev.reps != null ? prev.reps : e.reps,
+      charge: prev && prev.charge != null ? prev.charge : e.charge,
+      validee: false,
+    };
+  });
+}
+
 function formatDateFR(iso) {
   if (!iso) return "";
   const [y, m, d] = iso.split("-");
@@ -660,11 +695,12 @@ useEffect(() => {
   }, [clientId, bookings]);
 
   // Auto-validation d'une séance distancielle par le client lui-même (un clic, date du jour)
-  const validateDistancielSession = useCallback(async () => {
-    if (!clientId) return;
+  const validateDistancielSession = useCallback(async (uri) => {
+    if (!clientId) return null;
     setSaving(true);
+    const bookingUri = uri || uid("distanciel");
     const newBooking = {
-      uri: uid("distanciel"),
+      uri: bookingUri,
       start_time: new Date().toISOString(),
       status: "effectuee",
       type: "distanciel",
@@ -680,6 +716,7 @@ useEffect(() => {
     }
     setSaving(false);
     setTimeout(() => setToast(null), 1800);
+    return bookingUri;
   }, [clientId, bookings]);
 
   // Supprime une séance ajoutée manuellement (les réservations Calendly ne
@@ -804,6 +841,7 @@ bookings={bookings}
                 deleteProgrammeHistorique={deleteProgrammeHistorique}
                 deleteProgrammeDistancielHistorique={deleteProgrammeDistancielHistorique}
                 validateDistancielSession={validateDistancielSession}
+                deleteManualBooking={deleteManualBooking}
               />
             )}
             {view === "progression" && <ProgressionView data={data} />}
@@ -2133,7 +2171,7 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
   );
 }
 
-function SuiviView({ data, persistSessions, role, activeClient, deleteProgrammeHistorique, deleteProgrammeDistancielHistorique, validateDistancielSession }) {
+function SuiviView({ data, persistSessions, role, activeClient, deleteProgrammeHistorique, deleteProgrammeDistancielHistorique, validateDistancielSession, deleteManualBooking }) {
   const exercises = exMap(data);
   const [expanded, setExpanded] = useState(null);
   const [showNew, setShowNew] = useState(false);
@@ -2149,9 +2187,15 @@ function SuiviView({ data, persistSessions, role, activeClient, deleteProgrammeH
   };
 
   const deleteSession = (sessionId) => {
+    const session = data.sessions.find((s) => s.id === sessionId);
     const newSessions = data.sessions.filter((s) => s.id !== sessionId);
     persistSessions(newSessions);
     setExpanded((cur) => (cur === sessionId ? null : cur));
+    // Si cette séance avait automatiquement validé une réservation distancielle
+    // liée, on la retire aussi pour que le décompte du profil reste juste.
+    if (session && session.distancielBookingUri) {
+      deleteManualBooking(session.distancielBookingUri);
+    }
   };
 
   const addSession = (session) => {
@@ -2195,10 +2239,15 @@ function SuiviView({ data, persistSessions, role, activeClient, deleteProgrammeH
   };
 
   const startFromTemplate = (seanceType) => {
-    const entries = makeEntries(seanceType.exerciceIds, exercises);
-    addSession({ id: uid("se"), date: quickDate, seanceNom: seanceType.nom, entries, niveaux: seanceType.niveaux || {} });
+    const baseEntries = makeEntries(seanceType.exerciceIds, exercises);
+    const previousMap = getPreviousEntriesSameSeance(data.sessions, seanceType.nom, null);
+    const entries = applyPreviousEntries(baseEntries, previousMap);
     if (seanceType.mode === "distanciel") {
-      validateDistancielSession();
+      const bookingUri = uid("distanciel");
+      addSession({ id: uid("se"), date: quickDate, seanceNom: seanceType.nom, entries, niveaux: seanceType.niveaux || {}, distancielBookingUri: bookingUri });
+      validateDistancielSession(bookingUri);
+    } else {
+      addSession({ id: uid("se"), date: quickDate, seanceNom: seanceType.nom, entries, niveaux: seanceType.niveaux || {} });
     }
   };
 
@@ -2998,6 +3047,15 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
     setDirty(true);
   };
 
+  // Valide (ou dévalide) une série individuellement, et enregistre tout de
+  // suite — indépendamment du bouton "Enregistrer les modifications" — pour
+  // que rien ne soit perdu si la séance n'est jamais explicitement clôturée.
+  const toggleValidee = (idx) => {
+    const copy = local.map((e, i) => (i === idx ? { ...e, validee: !e.validee } : e));
+    setLocal(copy);
+    onSave({ entries: copy, bilan, bilanAvant, niveaux: niveauxParExercice });
+  };
+
   const addSerie = (exerciceId) => {
     const rowsForEx = local.filter((e) => e.exerciceId === exerciceId);
     const maxSerie = rowsForEx.length ? Math.max(...rowsForEx.map((e) => e.serie)) : 0;
@@ -3007,6 +3065,7 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
       serie: maxSerie + 1,
       reps: template ? template.reps : null,
       charge: template ? template.charge : null,
+      validee: false,
     };
     setLocal((prev) => [...prev, newEntry]);
     setDirty(true);
@@ -3220,7 +3279,7 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                         </div>
                       )
                     ) : cardio ? (
-                      <div style={styles.entryRow}>
+                      <div style={rows[0] && rows[0].validee ? { ...styles.entryRow, ...styles.entryRowValidated } : styles.entryRow}>
                         <span style={styles.entryLabel}>Durée</span>
                         <input
                           type="number"
@@ -3249,6 +3308,17 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                           style={{ ...styles.numInput, width: 50 }}
                         />
                         <span style={styles.unitLabel}>sec</span>
+                        {rows[0] && (
+                          <button
+                            type="button"
+                            onClick={() => toggleValidee(rows[0]._idx)}
+                            title={rows[0].validee ? "Marquer comme non validée" : "Valider cette série"}
+                            aria-label={rows[0].validee ? "Marquer comme non validée" : "Valider cette série"}
+                            style={rows[0].validee ? { ...styles.validateSerieBtn, ...styles.validateSerieBtnActive } : styles.validateSerieBtn}
+                          >
+                            ✓
+                          </button>
+                        )}
                         {showConsignesBtn && (
                           <button
                             style={{ ...styles.infoBtn, ...styles.infoBtnConsignes, ...(openConsignes[exId] ? styles.infoBtnActive : {}) }}
@@ -3277,7 +3347,7 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                       const timerKey = exId + "_" + row.serie;
                       return (
                       <React.Fragment key={row._idx}>
-                      <div style={styles.entryRow}>
+                      <div style={row.validee ? { ...styles.entryRow, ...styles.entryRowValidated } : styles.entryRow}>
                         <span style={styles.entryLabel}>Set {row.serie}</span>
                         <button
                           type="button"
@@ -3321,6 +3391,15 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                             <span style={styles.unitLabel}>kg</span>
                           </>
                         )}
+                        <button
+                          type="button"
+                          onClick={() => toggleValidee(row._idx)}
+                          title={row.validee ? "Marquer comme non validée" : "Valider cette série"}
+                          aria-label={row.validee ? "Marquer comme non validée" : "Valider cette série"}
+                          style={row.validee ? { ...styles.validateSerieBtn, ...styles.validateSerieBtnActive } : styles.validateSerieBtn}
+                        >
+                          ✓
+                        </button>
                         {prev && (
                           <span style={styles.prevValue}>
                             Dernière fois : {prev.reps ?? "—"}
@@ -3583,8 +3662,10 @@ function NewSessionForm({ data, onCancel, onSave }) {
   const save = () => {
     if (!date || selectedKeys.length === 0) return;
     const { exerciceIds, niveaux } = finalizeSelection(selectedKeys, niveauxByKey, exercisesMap);
-    const entries = makeEntries(exerciceIds, exercisesMap);
+    const baseEntries = makeEntries(exerciceIds, exercisesMap);
     const st = data.seanceTypes.find((s) => s.id === seanceTypeId);
+    const previousMap = st ? getPreviousEntriesSameSeance(data.sessions, st.nom, null) : null;
+    const entries = applyPreviousEntries(baseEntries, previousMap);
     onSave({ id: uid("se"), date, seanceNom: st ? st.nom : null, entries, niveaux });
   };
 
@@ -7445,6 +7526,31 @@ const styles = {
     background: COLORS.accent,
     borderColor: COLORS.accent,
     color: COLORS.bg,
+  },
+  validateSerieBtn: {
+    width: 26,
+    height: 26,
+    borderRadius: 6,
+    border: `1px solid ${COLORS.cardBorder}`,
+    background: COLORS.bg2,
+    color: COLORS.textFaint,
+    fontSize: 13,
+    fontWeight: 700,
+    cursor: "pointer",
+    flexShrink: 0,
+    padding: 0,
+    lineHeight: 1,
+  },
+  validateSerieBtnActive: {
+    background: "#5CB85C",
+    borderColor: "#5CB85C",
+    color: "#0F1A0F",
+  },
+  entryRowValidated: {
+    background: "rgba(92,184,92,0.08)",
+    borderRadius: 8,
+    padding: "4px 6px",
+    margin: "-4px -6px 6px -6px",
   },
   consignesPanel: {
     marginTop: 8,
