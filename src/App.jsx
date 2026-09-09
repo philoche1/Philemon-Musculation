@@ -441,9 +441,66 @@ useEffect(() => {
 
   const assignProgram = useCallback(async (programId) => {
     if (!clientId) return;
-    const newClients = clients.map((c) =>
-      c.id === clientId ? { ...c, programId: programId || null } : c
-    );
+    const now = new Date().toISOString();
+    const newClients = clients.map((c) => {
+      if (c.id !== clientId) return c;
+      if ((programId || null) === (c.programId || null)) return c; // pas de changement réel
+      const historique = c.programmeHistorique || [];
+      // clôture l'entrée en cours si elle existe encore
+      const historiqueMisAJour = historique.map((h, i) =>
+        i === historique.length - 1 && !h.dateFin ? { ...h, dateFin: now } : h
+      );
+      const nouvelleEntree = programId ? [{ programId, dateDebut: now, dateFin: null }] : [];
+      return {
+        ...c,
+        programId: programId || null,
+        programmeHistorique: [...historiqueMisAJour, ...nouvelleEntree],
+      };
+    });
+    setClients(newClients);
+    try { await window.storage.set(CLIENTS_KEY, JSON.stringify(newClients), true); } catch (e) {}
+  }, [clientId, clients]);
+
+  // Permet au coach de retirer une entrée de l'historique des programmes suivis
+  const deleteProgrammeHistorique = useCallback(async (index) => {
+    if (!clientId) return;
+    const newClients = clients.map((c) => {
+      if (c.id !== clientId) return c;
+      const historique = (c.programmeHistorique || []).filter((_, i) => i !== index);
+      return { ...c, programmeHistorique: historique };
+    });
+    setClients(newClients);
+    try { await window.storage.set(CLIENTS_KEY, JSON.stringify(newClients), true); } catch (e) {}
+  }, [clientId, clients]);
+
+  const assignProgramDistanciel = useCallback(async (programId) => {
+    if (!clientId) return;
+    const now = new Date().toISOString();
+    const newClients = clients.map((c) => {
+      if (c.id !== clientId) return c;
+      if ((programId || null) === (c.programDistancielId || null)) return c;
+      const historique = c.programmeDistancielHistorique || [];
+      const historiqueMisAJour = historique.map((h, i) =>
+        i === historique.length - 1 && !h.dateFin ? { ...h, dateFin: now } : h
+      );
+      const nouvelleEntree = programId ? [{ programId, dateDebut: now, dateFin: null }] : [];
+      return {
+        ...c,
+        programDistancielId: programId || null,
+        programmeDistancielHistorique: [...historiqueMisAJour, ...nouvelleEntree],
+      };
+    });
+    setClients(newClients);
+    try { await window.storage.set(CLIENTS_KEY, JSON.stringify(newClients), true); } catch (e) {}
+  }, [clientId, clients]);
+
+  const deleteProgrammeDistancielHistorique = useCallback(async (index) => {
+    if (!clientId) return;
+    const newClients = clients.map((c) => {
+      if (c.id !== clientId) return c;
+      const historique = (c.programmeDistancielHistorique || []).filter((_, i) => i !== index);
+      return { ...c, programmeDistancielHistorique: historique };
+    });
     setClients(newClients);
     try { await window.storage.set(CLIENTS_KEY, JSON.stringify(newClients), true); } catch (e) {}
   }, [clientId, clients]);
@@ -714,6 +771,8 @@ bookings={bookings}
                 persistSessions={persistSessions}
                 role={roleEffectif}
                 activeClient={activeClient}
+                deleteProgrammeHistorique={deleteProgrammeHistorique}
+                deleteProgrammeDistancielHistorique={deleteProgrammeDistancielHistorique}
               />
             )}
             {view === "progression" && <ProgressionView data={data} />}
@@ -726,6 +785,7 @@ bookings={bookings}
                 role={roleEffectif}
                 activeClient={activeClient}
                 assignProgram={assignProgram}
+                assignProgramDistanciel={assignProgramDistanciel}
                 assignCtProgram={assignCtProgram}
               />
             )}
@@ -1984,7 +2044,7 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
   );
 }
 
-function SuiviView({ data, persistSessions, role, activeClient }) {
+function SuiviView({ data, persistSessions, role, activeClient, deleteProgrammeHistorique, deleteProgrammeDistancielHistorique }) {
   const exercises = exMap(data);
   const [expanded, setExpanded] = useState(null);
   const [showNew, setShowNew] = useState(false);
@@ -2026,6 +2086,7 @@ function SuiviView({ data, persistSessions, role, activeClient }) {
 };
 
   const assignedProgram = activeClient ? data.programs.find((p) => p.id === activeClient.programId) : null;
+  const assignedProgramDistanciel = activeClient ? data.programs.find((p) => p.id === activeClient.programDistancielId) : null;
   const stMap = {};
   data.seanceTypes.forEach((s) => (stMap[s.id] = s));
 
@@ -2048,7 +2109,7 @@ function SuiviView({ data, persistSessions, role, activeClient }) {
       {assignedProgram && (
         <div style={{ ...styles.card, marginBottom: 16, borderColor: COLORS.accent }}>
           <div style={{ fontSize: 13, color: COLORS.textDim, marginBottom: 10 }}>
-            Programme en cours : <strong style={{ color: COLORS.accent }}>{assignedProgram.nom}</strong>
+            Programme présentiel en cours : <strong style={{ color: COLORS.accent }}>{assignedProgram.nom}</strong>
           </div>
           <label style={styles.fieldLabel}>Date de la séance</label>
           <input
@@ -2078,6 +2139,102 @@ function SuiviView({ data, persistSessions, role, activeClient }) {
                 </div>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {assignedProgramDistanciel && (
+        <div style={{ ...styles.card, marginBottom: 16, borderColor: COLORS.accent2 }}>
+          <div style={{ fontSize: 13, color: COLORS.textDim, marginBottom: 10 }}>
+            Programme distanciel en cours : <strong style={{ color: COLORS.accent2 }}>{assignedProgramDistanciel.nom}</strong>
+            <span style={styles.pill}> {assignedProgramDistanciel.lieu === "maison" ? "Maison" : "Salle"}</span>
+          </div>
+          <label style={styles.fieldLabel}>Date de la séance</label>
+          <input
+            type="date"
+            value={quickDate}
+            onChange={(e) => setQuickDate(e.target.value)}
+            style={{ ...styles.textInput, maxWidth: 200 }}
+          />
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 4 }}>
+            {assignedProgramDistanciel.seanceTypeIds.map((stId) => {
+              const st = stMap[stId];
+              if (!st) return null;
+              return (
+                <div key={stId} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "8px 10px", background: COLORS.bg2, borderRadius: 8 }}>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: COLORS.text }}>{st.nom}</div>
+                    <div style={{ fontSize: 11, color: COLORS.textDim, lineHeight: 1.6 }}>
+                      {groupExIdsByZone(st.exerciceIds, exercises).map(([label, ids]) => (
+                        <div key={label}>
+                          <span style={{ color: COLORS.accent2, fontWeight: 600 }}>{label} : </span>
+                          {ids.map((exId) => exDisplayName(exercises[exId])).filter(Boolean).join(" · ")}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <button style={styles.secondaryBtn} onClick={() => startFromTemplate(st)}>Démarrer</button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {activeClient && (((activeClient.programmeHistorique || []).length > 0) || ((activeClient.programmeDistancielHistorique || []).length > 0)) && (
+        <div style={{ ...styles.card, marginBottom: 16, padding: 0, overflow: "hidden" }}>
+          <div style={{ fontSize: 11, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, padding: "16px 16px 0 16px" }}>
+            Historique des programmes suivis
+          </div>
+          <div style={{ overflowX: "auto" }}>
+            <table style={styles.table}>
+              <thead>
+                <tr>
+                  <th style={styles.th}>Programme</th>
+                  <th style={styles.th}>Type</th>
+                  <th style={styles.th}>Période</th>
+                  {role === "coach" && <th style={styles.th}></th>}
+                </tr>
+              </thead>
+              <tbody>
+                {[
+                  ...(activeClient.programmeHistorique || []).map((h, i) => ({ ...h, originalIndex: i, typeLabel: "Présentiel" })),
+                  ...(activeClient.programmeDistancielHistorique || []).map((h, i) => ({ ...h, originalIndex: i, typeLabel: "Distanciel" })),
+                ]
+                  .sort((a, b) => new Date(b.dateDebut) - new Date(a.dateDebut))
+                  .map((h, i) => {
+                    const prog = data.programs.find((p) => p.id === h.programId);
+                    return (
+                      <tr key={i}>
+                        <td style={styles.td}>{prog ? prog.nom : "Programme supprimé"}</td>
+                        <td style={styles.td}>
+                          <span style={{ fontSize: 12, color: COLORS.textDim }}>{h.typeLabel}</span>
+                        </td>
+                        <td style={styles.td}>
+                          {formatDateFR(h.dateDebut.slice(0, 10))}
+                          {" → "}
+                          {h.dateFin ? formatDateFR(h.dateFin.slice(0, 10)) : "en cours"}
+                        </td>
+                        {role === "coach" && (
+                          <td style={styles.td}>
+                            <button
+                              style={styles.dangerLinkBtn}
+                              onClick={() => {
+                                if (window.confirm("Supprimer cette entrée de l'historique des programmes ?")) {
+                                  if (h.typeLabel === "Présentiel") deleteProgrammeHistorique(h.originalIndex);
+                                  else deleteProgrammeDistancielHistorique(h.originalIndex);
+                                }
+                              }}
+                            >
+                              Supprimer
+                            </button>
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  })}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
@@ -5143,7 +5300,7 @@ function ProgressionView({ data }) {
   );
 }
 
-function ProgrammesView({ data, persistLibrary, role, activeClient, assignProgram, assignCtProgram }) {
+function ProgrammesView({ data, persistLibrary, role, activeClient, assignProgram, assignProgramDistanciel, assignCtProgram }) {
   const [showNewProgram, setShowNewProgram] = useState(false);
   const [editingProgramId, setEditingProgramId] = useState(null);
   const [showNewCTProgram, setShowNewCTProgram] = useState(false);
@@ -5156,10 +5313,13 @@ function ProgrammesView({ data, persistLibrary, role, activeClient, assignProgra
   data.ctTypes.forEach((c) => (ctMap[c.id] = c));
   const exMapLocal = exMap(data);
 
-  // Le client ne voit que son propre programme assigné, pas le catalogue complet
+  const programsPresentielCatalogue = data.programs.filter((p) => (p.mode || "presentiel") === "presentiel");
+  const programsDistancielCatalogue = data.programs.filter((p) => p.mode === "distanciel");
+
+  // Le client ne voit que ses propres programmes assignés (présentiel + distanciel), pas le catalogue complet
   const programsVisibles = isCoach
     ? data.programs
-    : data.programs.filter((p) => activeClient && p.id === activeClient.programId);
+    : data.programs.filter((p) => activeClient && (p.id === activeClient.programId || p.id === activeClient.programDistancielId));
   const ctProgramsVisibles = isCoach
     ? data.ctPrograms
     : data.ctPrograms.filter((p) => activeClient && p.id === activeClient.ctProgramId);
@@ -5206,7 +5366,7 @@ function ProgrammesView({ data, persistLibrary, role, activeClient, assignProgra
       {isCoach && activeClient && (
         <div style={{ ...styles.card, marginBottom: 16, borderColor: COLORS.accent }}>
           <div style={{ fontSize: 13, color: COLORS.textDim, marginBottom: 8 }}>
-            Programme assigné à <strong style={{ color: COLORS.text }}>{activeClient.name}</strong>
+            Programme présentiel assigné à <strong style={{ color: COLORS.text }}>{activeClient.name}</strong>
           </div>
           <select
             value={activeClient.programId || ""}
@@ -5214,8 +5374,26 @@ function ProgrammesView({ data, persistLibrary, role, activeClient, assignProgra
             style={{ ...styles.textInput, marginBottom: 0 }}
           >
             <option value="">— Aucun programme assigné —</option>
-            {data.programs.map((pr) => (
+            {programsPresentielCatalogue.map((pr) => (
               <option key={pr.id} value={pr.id}>{pr.nom}</option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {isCoach && activeClient && (
+        <div style={{ ...styles.card, marginBottom: 16, borderColor: COLORS.accent2 }}>
+          <div style={{ fontSize: 13, color: COLORS.textDim, marginBottom: 8 }}>
+            Programme distanciel assigné à <strong style={{ color: COLORS.text }}>{activeClient.name}</strong>
+          </div>
+          <select
+            value={activeClient.programDistancielId || ""}
+            onChange={(e) => assignProgramDistanciel(e.target.value)}
+            style={{ ...styles.textInput, marginBottom: 0 }}
+          >
+            <option value="">— Aucun programme assigné —</option>
+            {programsDistancielCatalogue.map((pr) => (
+              <option key={pr.id} value={pr.id}>{pr.nom} ({pr.lieu === "maison" ? "Maison" : "Salle"})</option>
             ))}
           </select>
         </div>
@@ -5224,10 +5402,22 @@ function ProgrammesView({ data, persistLibrary, role, activeClient, assignProgra
       {!isCoach && activeClient && activeClient.programId && (
         <div style={{ ...styles.card, marginBottom: 16, borderColor: COLORS.accent }}>
           <div style={{ fontSize: 13, color: COLORS.textDim }}>
-            Ton programme actuel : <strong style={{ color: COLORS.accent }}>{data.programs.find((p) => p.id === activeClient.programId)?.nom || "—"}</strong>
+            Ton programme présentiel actuel : <strong style={{ color: COLORS.accent }}>{data.programs.find((p) => p.id === activeClient.programId)?.nom || "—"}</strong>
           </div>
         </div>
       )}
+
+      {!isCoach && activeClient && activeClient.programDistancielId && (() => {
+        const progDist = data.programs.find((p) => p.id === activeClient.programDistancielId);
+        return (
+          <div style={{ ...styles.card, marginBottom: 16, borderColor: COLORS.accent2 }}>
+            <div style={{ fontSize: 13, color: COLORS.textDim }}>
+              Ton programme distanciel actuel : <strong style={{ color: COLORS.accent2 }}>{progDist ? progDist.nom : "—"}</strong>
+              {progDist && <span style={styles.pill}> {progDist.lieu === "maison" ? "Maison" : "Salle"}</span>}
+            </div>
+          </div>
+        );
+      })()}
 
       {showNewProgram && (
         <NewProgramForm data={data} onCancel={() => setShowNewProgram(false)} onSave={addProgram} />
@@ -5238,7 +5428,7 @@ function ProgrammesView({ data, persistLibrary, role, activeClient, assignProgra
           <div style={styles.emptyState}>Aucun programme assigné pour l'instant.</div>
         )}
         {programsVisibles.map((pr) => {
-          const isAssigned = activeClient && activeClient.programId === pr.id;
+          const isAssigned = activeClient && (activeClient.programId === pr.id || activeClient.programDistancielId === pr.id);
           if (isCoach && editingProgramId === pr.id) {
             return (
               <EditProgramForm
@@ -5253,9 +5443,12 @@ function ProgrammesView({ data, persistLibrary, role, activeClient, assignProgra
           return (
           <div key={pr.id} style={{ ...styles.card, borderColor: isAssigned ? COLORS.accent : COLORS.cardBorder }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                 <div style={{ fontFamily: FONT_DISPLAY, fontSize: 15, color: COLORS.text }}>{pr.nom}</div>
                 {isAssigned && <span style={styles.pill}>Assigné</span>}
+                {pr.mode === "distanciel" && (
+                  <span style={styles.pill}>Distanciel · {pr.lieu === "maison" ? "Maison" : "Salle"}</span>
+                )}
               </div>
               {isCoach && (
                 <button style={styles.linkBtn} onClick={() => setEditingProgramId(pr.id)}>Modifier</button>
@@ -5425,12 +5618,16 @@ function SeanceTypesView({ data, persistLibrary, role, activeClient }) {
     setEditingCTTypeId(null);
   };
 
-  // Le client ne voit que les séances/circuits inclus dans son programme assigné
+  // Le client ne voit que les séances/circuits inclus dans ses programmes assignés (présentiel + distanciel)
   let seanceTypesVisibles = data.seanceTypes;
   let ctTypesVisibles = data.ctTypes;
   if (!isCoach) {
     const programme = activeClient ? data.programs.find((p) => p.id === activeClient.programId) : null;
-    const idsAutorises = programme ? programme.seanceTypeIds : [];
+    const programmeDistanciel = activeClient ? data.programs.find((p) => p.id === activeClient.programDistancielId) : null;
+    const idsAutorises = [
+      ...(programme ? programme.seanceTypeIds : []),
+      ...(programmeDistanciel ? programmeDistanciel.seanceTypeIds : []),
+    ];
     seanceTypesVisibles = data.seanceTypes.filter((st) => idsAutorises.includes(st.id));
 
     const ctProgramme = activeClient ? data.ctPrograms.find((p) => p.id === activeClient.ctProgramId) : null;
@@ -5714,14 +5911,65 @@ function ExercisesView({ data, persistLibrary, role }) {
 function NewProgramForm({ data, onCancel, onSave }) {
   const [nom, setNom] = useState("");
   const [ids, setIds] = useState([]);
+  const [mode, setMode] = useState("presentiel");
+  const [lieu, setLieu] = useState("salle");
   const toggle = (id) => setIds((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
+  const exercisesMap = exMap(data);
+  const estMaisonCompatible = (st) => st.exerciceIds.length > 0 && st.exerciceIds.every((exId) => exercisesMap[exId] && exercisesMap[exId].maison);
+  const seanceTypesDisponibles = mode === "distanciel" && lieu === "maison"
+    ? data.seanceTypes.filter(estMaisonCompatible)
+    : data.seanceTypes;
   return (
     <div style={{ ...styles.card, marginBottom: 14 }}>
       <label style={styles.fieldLabel}>Nom du programme</label>
       <input style={styles.textInput} value={nom} onChange={(e) => setNom(e.target.value)} placeholder="Ex: Programme prise de masse" />
+      <label style={styles.fieldLabel}>Mode</label>
+      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+        <button
+          style={{ ...styles.secondaryBtn, ...(mode === "presentiel" ? { background: COLORS.accent, color: COLORS.bg, borderColor: COLORS.accent } : {}) }}
+          onClick={() => setMode("presentiel")}
+        >
+          Présentiel
+        </button>
+        <button
+          style={{ ...styles.secondaryBtn, ...(mode === "distanciel" ? { background: COLORS.accent, color: COLORS.bg, borderColor: COLORS.accent } : {}) }}
+          onClick={() => setMode("distanciel")}
+        >
+          Distanciel
+        </button>
+      </div>
+      {mode === "distanciel" && (
+        <>
+          <label style={styles.fieldLabel}>Lieu</label>
+          <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+            <button
+              style={{ ...styles.secondaryBtn, ...(lieu === "salle" ? { background: COLORS.accent2, color: COLORS.bg, borderColor: COLORS.accent2 } : {}) }}
+              onClick={() => setLieu("salle")}
+            >
+              Salle de sport
+            </button>
+            <button
+              style={{ ...styles.secondaryBtn, ...(lieu === "maison" ? { background: COLORS.accent2, color: COLORS.bg, borderColor: COLORS.accent2 } : {}) }}
+              onClick={() => setLieu("maison")}
+            >
+              Maison
+            </button>
+          </div>
+          {lieu === "maison" && (
+            <p style={{ fontSize: 11, color: COLORS.textFaint, marginTop: -6, marginBottom: 10 }}>
+              Seules les séances entièrement composées d'exercices faisables à la maison sont proposées ci-dessous.
+            </p>
+          )}
+        </>
+      )}
       <label style={styles.fieldLabel}>Séances incluses</label>
       <div style={styles.checklist}>
-        {data.seanceTypes.map((st) => (
+        {seanceTypesDisponibles.length === 0 && (
+          <div style={{ fontSize: 12, color: COLORS.textFaint, padding: "6px 2px" }}>
+            Aucune séance compatible maison pour l'instant. Coche "Faisable à la maison" sur les exercices concernés dans le catalogue.
+          </div>
+        )}
+        {seanceTypesDisponibles.map((st) => (
           <label key={st.id} style={styles.checkItem}>
             <input type="checkbox" checked={ids.includes(st.id)} onChange={() => toggle(st.id)} />
             <span style={{ marginLeft: 8 }}>{st.nom}</span>
@@ -5730,7 +5978,11 @@ function NewProgramForm({ data, onCancel, onSave }) {
       </div>
       <div style={{ display: "flex", gap: 10, marginTop: 14, justifyContent: "flex-end" }}>
         <button style={styles.secondaryBtn} onClick={onCancel}>Annuler</button>
-        <button style={styles.primaryBtn} disabled={!nom || ids.length === 0} onClick={() => onSave({ nom, seanceTypeIds: ids })}>
+        <button
+          style={styles.primaryBtn}
+          disabled={!nom || ids.length === 0}
+          onClick={() => onSave({ nom, seanceTypeIds: ids, mode, lieu: mode === "distanciel" ? lieu : null })}
+        >
           Créer
         </button>
       </div>
@@ -5741,15 +5993,66 @@ function NewProgramForm({ data, onCancel, onSave }) {
 function EditProgramForm({ data, program, onCancel, onSave }) {
   const [nom, setNom] = useState(program.nom);
   const [ids, setIds] = useState(program.seanceTypeIds);
+  const [mode, setMode] = useState(program.mode || "presentiel");
+  const [lieu, setLieu] = useState(program.lieu || "salle");
   const toggle = (id) => setIds((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
+  const exercisesMap = exMap(data);
+  const estMaisonCompatible = (st) => st.exerciceIds.length > 0 && st.exerciceIds.every((exId) => exercisesMap[exId] && exercisesMap[exId].maison);
+  const seanceTypesDisponibles = mode === "distanciel" && lieu === "maison"
+    ? data.seanceTypes.filter(estMaisonCompatible)
+    : data.seanceTypes;
   return (
     <div style={{ ...styles.card, borderColor: COLORS.accent2 }}>
       <div style={{ fontFamily: FONT_DISPLAY, fontSize: 15, color: COLORS.text, marginBottom: 12 }}>Modifier le programme</div>
       <label style={styles.fieldLabel}>Nom du programme</label>
       <input style={styles.textInput} value={nom} onChange={(e) => setNom(e.target.value)} />
+      <label style={styles.fieldLabel}>Mode</label>
+      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+        <button
+          style={{ ...styles.secondaryBtn, ...(mode === "presentiel" ? { background: COLORS.accent, color: COLORS.bg, borderColor: COLORS.accent } : {}) }}
+          onClick={() => setMode("presentiel")}
+        >
+          Présentiel
+        </button>
+        <button
+          style={{ ...styles.secondaryBtn, ...(mode === "distanciel" ? { background: COLORS.accent, color: COLORS.bg, borderColor: COLORS.accent } : {}) }}
+          onClick={() => setMode("distanciel")}
+        >
+          Distanciel
+        </button>
+      </div>
+      {mode === "distanciel" && (
+        <>
+          <label style={styles.fieldLabel}>Lieu</label>
+          <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+            <button
+              style={{ ...styles.secondaryBtn, ...(lieu === "salle" ? { background: COLORS.accent2, color: COLORS.bg, borderColor: COLORS.accent2 } : {}) }}
+              onClick={() => setLieu("salle")}
+            >
+              Salle de sport
+            </button>
+            <button
+              style={{ ...styles.secondaryBtn, ...(lieu === "maison" ? { background: COLORS.accent2, color: COLORS.bg, borderColor: COLORS.accent2 } : {}) }}
+              onClick={() => setLieu("maison")}
+            >
+              Maison
+            </button>
+          </div>
+          {lieu === "maison" && (
+            <p style={{ fontSize: 11, color: COLORS.textFaint, marginTop: -6, marginBottom: 10 }}>
+              Seules les séances entièrement composées d'exercices faisables à la maison sont proposées ci-dessous.
+            </p>
+          )}
+        </>
+      )}
       <label style={styles.fieldLabel}>Séances incluses</label>
       <div style={styles.checklist}>
-        {data.seanceTypes.map((st) => (
+        {seanceTypesDisponibles.length === 0 && (
+          <div style={{ fontSize: 12, color: COLORS.textFaint, padding: "6px 2px" }}>
+            Aucune séance compatible maison pour l'instant. Coche "Faisable à la maison" sur les exercices concernés dans le catalogue.
+          </div>
+        )}
+        {seanceTypesDisponibles.map((st) => (
           <label key={st.id} style={styles.checkItem}>
             <input type="checkbox" checked={ids.includes(st.id)} onChange={() => toggle(st.id)} />
             <span style={{ marginLeft: 8 }}>{st.nom}</span>
@@ -5758,7 +6061,11 @@ function EditProgramForm({ data, program, onCancel, onSave }) {
       </div>
       <div style={{ display: "flex", gap: 10, marginTop: 14, justifyContent: "flex-end" }}>
         <button style={styles.secondaryBtn} onClick={onCancel}>Annuler</button>
-        <button style={styles.primaryBtn} disabled={!nom || ids.length === 0} onClick={() => onSave({ nom, seanceTypeIds: ids })}>
+        <button
+          style={styles.primaryBtn}
+          disabled={!nom || ids.length === 0}
+          onClick={() => onSave({ nom, seanceTypeIds: ids, mode, lieu: mode === "distanciel" ? lieu : null })}
+        >
           Enregistrer
         </button>
       </div>
@@ -6541,6 +6848,7 @@ function NewExerciseForm({ data, onCancel, onSave }) {
   const [nom, setNom] = useState("");
   const [consignes, setConsignes] = useState({});
   const [videoUrl, setVideoUrl] = useState("");
+  const [maison, setMaison] = useState(false);
   const [niveaux, setNiveaux] = useState([
     { nom: "", consignes: {}, videoUrl: "" },
     { nom: "", consignes: {}, videoUrl: "" },
@@ -6599,6 +6907,11 @@ function NewExerciseForm({ data, onCancel, onSave }) {
         placeholder="Ex: Quadriceps"
       />
 
+      <label style={{ ...styles.checkItem, marginTop: 8, cursor: "pointer" }}>
+        <input type="checkbox" checked={maison} onChange={(e) => setMaison(e.target.checked)} />
+        <span style={{ marginLeft: 8 }}>Faisable à la maison (sans machine de musculation)</span>
+      </label>
+
       <label style={styles.fieldLabel}>Niveaux de cet exercice (optionnel, pour le tableau CT)</label>
       <ExerciseLevelsWithDetailsFields niveaux={niveaux} onChange={setNiveaux} />
 
@@ -6630,6 +6943,7 @@ function NewExerciseForm({ data, onCancel, onSave }) {
               niveaux,
               consignes,
               videoUrl: videoUrl.trim(),
+              maison,
             })
           }
         >
@@ -6644,6 +6958,7 @@ function EditExerciseForm({ data, exercise, onCancel, onSave }) {
   const [nom, setNom] = useState(exercise.nom);
   const [consignes, setConsignes] = useState(exercise.consignes || {});
   const [videoUrl, setVideoUrl] = useState(exercise.videoUrl || "");
+  const [maison, setMaison] = useState(!!exercise.maison);
   const [niveaux, setNiveaux] = useState(
     Array.isArray(exercise.niveaux) && exercise.niveaux.length
       ? exercise.niveaux.map((n) => (typeof n === "string" ? { nom: n, consignes: {}, videoUrl: "" } : n))
@@ -6707,6 +7022,11 @@ function EditExerciseForm({ data, exercise, onCancel, onSave }) {
         placeholder="Ex: Quadriceps"
       />
 
+      <label style={{ ...styles.checkItem, marginTop: 8, cursor: "pointer" }}>
+        <input type="checkbox" checked={maison} onChange={(e) => setMaison(e.target.checked)} />
+        <span style={{ marginLeft: 8 }}>Faisable à la maison (sans machine de musculation)</span>
+      </label>
+
       <label style={styles.fieldLabel}>Niveaux de cet exercice (optionnel, pour le tableau CT)</label>
       <ExerciseLevelsWithDetailsFields niveaux={niveaux} onChange={setNiveaux} />
 
@@ -6738,6 +7058,7 @@ function EditExerciseForm({ data, exercise, onCancel, onSave }) {
               niveaux,
               consignes,
               videoUrl: videoUrl.trim(),
+              maison,
             })
           }
         >
