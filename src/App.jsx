@@ -25,6 +25,13 @@ const LIENS_CALENDLY = {
   "1h": "https://calendly.com/philemon-stordeur/philemon-musculation-1h",
   "1h30": "https://calendly.com/philemon-stordeur/philemon-musculation-1h30",
 };
+const PALIERS_ACCOMPAGNEMENT = [
+  { id: "fer", nom: "Fer", presentiel: 5, distanciel: 0 },
+  { id: "bronze", nom: "Bronze", presentiel: 23, distanciel: 10 },
+  { id: "argent", nom: "Argent", presentiel: 44, distanciel: 23 },
+  { id: "or", nom: "Or", presentiel: 60, distanciel: 40 },
+  { id: "diamant", nom: "Diamant", presentiel: 60, distanciel: 40 },
+];
 const PROFILE_FIELDS = [
   { key: "passeSportif", label: "Passé sportif, activité" },
   { key: "presentSportif", label: "Présent sportif, activité" },
@@ -558,6 +565,27 @@ useEffect(() => {
     setClients(newClients);
     try { await window.storage.set(CLIENTS_KEY, JSON.stringify(newClients), true); } catch (e) {}
   }, [clientId, clients]);
+
+  // Assigne un palier (Fer/Bronze/Argent/Or/Diamant) : fixe automatiquement
+  // les totaux présentiel + distanciel correspondants, et mémorise le palier
+  // en cours pour l'affichage de la frise de progression.
+  const assignPalier = useCallback(async (palierId) => {
+    if (!clientId) return;
+    const palier = PALIERS_ACCOMPAGNEMENT.find((p) => p.id === palierId);
+    const newClients = clients.map((c) => {
+      if (c.id !== clientId) return c;
+      if (!palier) return { ...c, palierActuel: null };
+      return {
+        ...c,
+        palierActuel: palierId,
+        accompagnementPresentielTotal: palier.presentiel,
+        accompagnementDistancielTotal: palier.distanciel,
+      };
+    });
+    setClients(newClients);
+    try { await window.storage.set(CLIENTS_KEY, JSON.stringify(newClients), true); } catch (e) {}
+  }, [clientId, clients]);
+
   const assignTypeSeance = useCallback(async (typeSeance) => {
     if (!clientId) return;
     const newClients = clients.map((c) =>
@@ -763,6 +791,7 @@ bookings={bookings}
                 deleteManualBooking={deleteManualBooking}
                 validateDistancielSession={validateDistancielSession}
                 onChangePin={changePin}
+                assignPalier={assignPalier}
               />
             )}
             {view === "suivi" && (
@@ -1490,7 +1519,44 @@ function groupExIdsByZoneMulti(exIds, exercises) {
   return order.map((label) => [label, byZone[label]]);
 }
 
-function ProfileView({ profile, profileLoaded, persistProfile, activeClient, role, presentielCount, distancielCount, bookings, assignAccompagnementPresentiel, setAccompagnementOffsetPresentiel, assignAccompagnementDistanciel, setAccompagnementOffsetDistanciel, assignTypeSeance, addManualBooking, deleteManualBooking, validateDistancielSession, onChangePin }) {
+function PalierFrise({ palierActuel }) {
+  const currentIndex = PALIERS_ACCOMPAGNEMENT.findIndex((p) => p.id === palierActuel);
+  return (
+    <div style={{ position: "relative", display: "flex", alignItems: "flex-start", justifyContent: "space-between", padding: "8px 4px 4px", marginBottom: 16 }}>
+      <div style={{ position: "absolute", left: 24, right: 24, top: 15, height: 2, background: COLORS.cardBorder, zIndex: 0 }} />
+      {PALIERS_ACCOMPAGNEMENT.map((p, i) => {
+        const isActive = i === currentIndex;
+        return (
+          <div key={p.id} style={{ position: "relative", zIndex: 1, display: "flex", flexDirection: "column", alignItems: "center", flex: 1 }}>
+            <div
+              style={{
+                width: isActive ? 22 : 12,
+                height: isActive ? 22 : 12,
+                borderRadius: "50%",
+                background: isActive ? COLORS.accent : COLORS.bg2,
+                border: `2px solid ${isActive ? COLORS.accent : COLORS.cardBorder}`,
+                marginBottom: 6,
+              }}
+            />
+            <span
+              style={{
+                fontSize: isActive ? 13 : 11,
+                fontWeight: isActive ? 700 : 400,
+                color: isActive ? COLORS.accent : COLORS.textFaint,
+                fontFamily: isActive ? FONT_DISPLAY : FONT_BODY,
+                textAlign: "center",
+              }}
+            >
+              {p.nom}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ProfileView({ profile, profileLoaded, persistProfile, activeClient, role, presentielCount, distancielCount, bookings, assignAccompagnementPresentiel, setAccompagnementOffsetPresentiel, assignAccompagnementDistanciel, setAccompagnementOffsetDistanciel, assignTypeSeance, addManualBooking, deleteManualBooking, validateDistancielSession, onChangePin, assignPalier }) {
   const [local, setLocal] = useState(profile || {});
   const [dirty, setDirty] = useState(false);
   const [editingOffsetPresentiel, setEditingOffsetPresentiel] = useState(false);
@@ -1612,6 +1678,7 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
 
   return (
     <div>
+      {activeClient && <PalierFrise palierActuel={activeClient.palierActuel} />}
       <div style={styles.rowBetween}>
         <h2 style={styles.h2}>Profil{activeClient ? ` — ${activeClient.name}` : ""}</h2>
         <button
@@ -1630,6 +1697,30 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
         <div style={{ fontSize: 11, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 10 }}>
           Accompagnement présentiel
         </div>
+        {activeClient.palierActuel && (
+          <div style={{ fontSize: 13, color: COLORS.textDim, marginBottom: 10 }}>
+            Palier actuel : <strong style={{ color: COLORS.accent }}>{PALIERS_ACCOMPAGNEMENT.find((p) => p.id === activeClient.palierActuel)?.nom}</strong>
+          </div>
+        )}
+        {isCoach && (
+          <div style={{ marginBottom: 12 }}>
+            <label style={{ fontSize: 12, color: COLORS.textDim, display: "block", marginBottom: 6 }}>Assigner un palier</label>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {PALIERS_ACCOMPAGNEMENT.map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() => assignPalier(activeClient.palierActuel === p.id ? null : p.id)}
+                  style={{
+                    ...styles.secondaryBtn,
+                    ...(activeClient.palierActuel === p.id ? { background: COLORS.accent, color: COLORS.bg, borderColor: COLORS.accent } : {}),
+                  }}
+                >
+                  {p.nom}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         {isCoach && (
           <div style={{ marginBottom: 12 }}>
             {editingTotalPresentiel ? (
@@ -1648,8 +1739,8 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
                 <button style={styles.linkBtn} onClick={() => setEditingTotalPresentiel(false)}>Annuler</button>
               </div>
             ) : (
-              <button style={styles.secondaryBtn} onClick={startEditTotalPresentiel}>
-                {totalPresentiel != null ? "Modifier le total présentiel" : "Définir un total présentiel"}
+              <button style={styles.linkBtn} onClick={startEditTotalPresentiel}>
+                {totalPresentiel != null ? "Ajuster manuellement le total présentiel" : "Définir un total présentiel manuellement"}
               </button>
             )}
           </div>
