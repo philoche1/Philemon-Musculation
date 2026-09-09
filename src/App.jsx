@@ -234,13 +234,13 @@ export default function App() {
           ctTypes: [],
           ctPrograms: [],
           alimentationVideos: { matin: "", midi: "", gouter: "", soir: "" },
-          ctLevelNames: ["Niveau 1", "Niveau 2", "Niveau 3", "Niveau 4", "Niveau 5"],
+          ctLevelNames: ["Bilatéral", "Unilatéral"],
         };
       } else {
         if (!lib.ctTypes) lib.ctTypes = [];
         if (!lib.ctPrograms) lib.ctPrograms = [];
         if (!lib.alimentationVideos) lib.alimentationVideos = { matin: "", midi: "", gouter: "", soir: "" };
-        if (!lib.ctLevelNames) lib.ctLevelNames = ["Niveau 1", "Niveau 2", "Niveau 3", "Niveau 4", "Niveau 5"];
+        if (!lib.ctLevelNames) lib.ctLevelNames = ["Bilatéral", "Unilatéral"];
       }
       setLibrary(lib);
       setLibraryLoaded(true);
@@ -1472,7 +1472,7 @@ function getExerciseNiveaux(ex, fallbackNames) {
     .map((n) => (typeof n === "string" ? { nom: n, consignes: {}, videoUrl: "" } : n))
     .filter((n) => n && n.nom && n.nom.trim());
   if (custom.length) return custom;
-  const defaults = fallbackNames && fallbackNames.length ? fallbackNames : ["Niveau 1", "Niveau 2", "Niveau 3", "Niveau 4", "Niveau 5"];
+  const defaults = fallbackNames && fallbackNames.length ? fallbackNames : ["Bilatéral", "Unilatéral"];
   return defaults.map((nom) => ({ nom, consignes: {}, videoUrl: "" }));
 }
 
@@ -3377,7 +3377,7 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                           placeholder={warmup ? "Sec." : endSession ? "Resp." : gainage ? "Sec." : "Rép."}
                           style={styles.numInput}
                         />
-                        <span style={styles.unitLabel}>{warmup ? '"' : endSession ? "resp" : gainage ? '"' : "rep"}</span>
+                        <span style={styles.unitLabel}>{warmup ? "sec" : endSession ? "resp" : gainage ? "sec" : "rep"}</span>
                         {!endSession && !gainage && (
                           <>
                             <input
@@ -4250,7 +4250,7 @@ function CTTableView({ clientId, role, data, persistLibrary }) {
 
   const levelNames = data.ctLevelNames && data.ctLevelNames.length
     ? data.ctLevelNames
-    : ["Niveau 1", "Niveau 2", "Niveau 3", "Niveau 4", "Niveau 5"];
+    : ["Bilatéral", "Unilatéral"];
 
   const startEditLevels = () => {
     setLevelNamesInput([...levelNames]);
@@ -6504,7 +6504,7 @@ function NewCTTypeForm({ data, onCancel, onSave }) {
   const exercisesMap = exMap(data);
   const levelNames = data.ctLevelNames && data.ctLevelNames.length
     ? data.ctLevelNames
-    : ["Niveau 1", "Niveau 2", "Niveau 3", "Niveau 4", "Niveau 5"];
+    : ["Bilatéral", "Unilatéral"];
 
   const buildTableExerciceIdsAndNiveaux = () => {
     const exerciceIds = [];
@@ -6651,7 +6651,7 @@ function EditCTTypeForm({ data, ctType, onCancel, onSave }) {
   const toggleKey = (key) => setSelectedKeys((p) => (p.includes(key) ? p.filter((x) => x !== key) : [...p, key]));
   const levelNames = data.ctLevelNames && data.ctLevelNames.length
     ? data.ctLevelNames
-    : ["Niveau 1", "Niveau 2", "Niveau 3", "Niveau 4", "Niveau 5"];
+    : ["Bilatéral", "Unilatéral"];
 
   const buildTableExerciceIdsAndNiveaux = () => {
     const exerciceIds = [];
@@ -7073,11 +7073,8 @@ function NewExerciseForm({ data, onCancel, onSave }) {
   const [videoUrl, setVideoUrl] = useState("");
   const [maison, setMaison] = useState(false);
   const [niveaux, setNiveaux] = useState([
-    { nom: "", consignes: {}, videoUrl: "" },
-    { nom: "", consignes: {}, videoUrl: "" },
-    { nom: "", consignes: {}, videoUrl: "" },
-    { nom: "", consignes: {}, videoUrl: "" },
-    { nom: "", consignes: {}, videoUrl: "" },
+    { nom: "Bilatéral", consignes: {}, videoUrl: "" },
+    { nom: "Unilatéral", consignes: {}, videoUrl: "" },
   ]);
 
   const [zoneOptions, setZoneOptions] = useState([...new Set([...STANDARD_ZONES, ...data.exercises.flatMap((e) => getExerciseZones(e))])]);
@@ -7186,11 +7183,8 @@ function EditExerciseForm({ data, exercise, onCancel, onSave }) {
     Array.isArray(exercise.niveaux) && exercise.niveaux.length
       ? exercise.niveaux.map((n) => (typeof n === "string" ? { nom: n, consignes: {}, videoUrl: "" } : n))
       : [
-          { nom: "", consignes: {}, videoUrl: "" },
-          { nom: "", consignes: {}, videoUrl: "" },
-          { nom: "", consignes: {}, videoUrl: "" },
-          { nom: "", consignes: {}, videoUrl: "" },
-          { nom: "", consignes: {}, videoUrl: "" },
+          { nom: "Bilatéral", consignes: {}, videoUrl: "" },
+          { nom: "Unilatéral", consignes: {}, videoUrl: "" },
         ]
   );
 
