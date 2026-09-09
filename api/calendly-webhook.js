@@ -74,6 +74,7 @@ export default async function handler(req, res) {
       uri: eventUri,
       start_time: startTime,
       status: 'reservee',
+      type: 'presentiel', // toute réservation Calendly est forcément présentielle
       cancel_url: cancelUrl || null,
       reschedule_url: rescheduleUrl || null,
     });
