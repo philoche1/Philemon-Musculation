@@ -405,6 +405,40 @@ useEffect(() => {
     return { status: "ok", id: data.client.id };
   };
 
+  const forgotPin = async (email) => {
+    try {
+      const res = await fetch("/api/musculation-client-login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "forgot_pin", email }),
+      });
+      return res.ok ? { status: "ok" } : { status: "error" };
+    } catch (e) {
+      return { status: "error" };
+    }
+  };
+
+  const changePin = async (oldPin, newPin) => {
+    try {
+      const res = await fetch("/api/musculation-client-login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${getClientToken()}` },
+        body: JSON.stringify({ action: "change_pin", oldPin, newPin }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { status: data.status || "error" };
+      // Met à jour la copie locale du client (utilisée pour l'affichage) avec le nouveau code
+      setClientRecord((prev) => {
+        const updated = prev ? { ...prev, pin: newPin } : prev;
+        try { window.localStorage.setItem("musculation-client-record-v1", JSON.stringify(updated)); } catch (e) {}
+        return updated;
+      });
+      return { status: "ok" };
+    } catch (e) {
+      return { status: "error" };
+    }
+  };
+
   const assignProgram = useCallback(async (programId) => {
     if (!clientId) return;
     const newClients = clients.map((c) =>
@@ -576,6 +610,7 @@ useEffect(() => {
         onDelete={deleteClient}
         onLogin={loginClient}
         onResendWelcome={renvoyerEmailBienvenue}
+        onForgotPin={forgotPin}
       />
     );
   }
@@ -620,6 +655,7 @@ bookings={bookings}
                 setAccompagnementOffset={setAccompagnementOffset}
                 addManualBooking={addManualBooking}
                 deleteManualBooking={deleteManualBooking}
+                onChangePin={changePin}
               />
             )}
             {view === "suivi" && (
@@ -801,11 +837,11 @@ function CoachAuth({ hasAccount, onCreate, onLogin, onChangeRole }) {
   );
 }
 
-function ClientSelect({ clients, role, onChoose, onAdd, onDelete, onLogin, onChangeRole, onResendWelcome }) {
+function ClientSelect({ clients, role, onChoose, onAdd, onDelete, onLogin, onChangeRole, onResendWelcome, onForgotPin }) {
   if (role === "coach") {
     return <CoachClientPicker clients={clients} onChoose={onChoose} onAdd={onAdd} onDelete={onDelete} onChangeRole={onChangeRole} onResendWelcome={onResendWelcome} />;
   }
-  return <ClientLogin onLogin={onLogin} onChoose={onChoose} onChangeRole={onChangeRole} />;
+  return <ClientLogin onLogin={onLogin} onChoose={onChoose} onChangeRole={onChangeRole} onForgotPin={onForgotPin} />;
 }
 
 function CoachClientPicker({ clients, onChoose, onAdd, onDelete, onChangeRole, onResendWelcome }) {
@@ -921,12 +957,17 @@ function CoachClientPicker({ clients, onChoose, onAdd, onDelete, onChangeRole, o
   );
 }
 
-function ClientLogin({ onLogin, onChoose, onChangeRole }) {
+function ClientLogin({ onLogin, onChoose, onChangeRole, onForgotPin }) {
   const [email, setEmail] = useState("");
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
+  const [showForgot, setShowForgot] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState("");
+  const [forgotSent, setForgotSent] = useState(false);
+  const [forgotLoading, setForgotLoading] = useState(false);
 
   const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+  const forgotEmailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(forgotEmail.trim());
 
    const [loading, setLoading] = useState(false);
 
@@ -947,6 +988,66 @@ function ClientLogin({ onLogin, onChoose, onChangeRole }) {
       setError("Aucun profil trouvé pour cette adresse mail. Vérifie l'orthographe ou contacte ton coach.");
     }
   };
+
+  const submitForgot = async () => {
+    if (!forgotEmailValid) return;
+    setForgotLoading(true);
+    await onForgotPin(forgotEmail.trim());
+    setForgotLoading(false);
+    setForgotSent(true);
+  };
+
+  if (showForgot) {
+    return (
+      <div style={{ ...styles.app, alignItems: "center", justifyContent: "center", display: "flex", minHeight: "100%" }}>
+        <div style={{ maxWidth: 380, width: "100%", padding: 24 }}>
+          <div style={{ fontFamily: FONT_DISPLAY, fontSize: 13, letterSpacing: 3, color: COLORS.accent, marginBottom: 8, textTransform: "uppercase", textAlign: "center" }}>
+            Philémon Musculation
+          </div>
+          <h1 style={{ fontFamily: FONT_DISPLAY, fontSize: 24, color: COLORS.text, margin: "0 0 8px 0", textAlign: "center" }}>
+            Code oublié ?
+          </h1>
+          <p style={{ color: COLORS.textDim, fontFamily: FONT_BODY, fontSize: 13, marginBottom: 8, textAlign: "center" }}>
+            {forgotSent
+              ? "Si un compte existe avec cette adresse, un nouveau code vient d'être envoyé par email."
+              : "Indique ton adresse mail, on t'envoie un nouveau code."}
+          </p>
+          <div style={styles.card}>
+            {!forgotSent ? (
+              <>
+                <label style={styles.fieldLabel}>Adresse mail</label>
+                <input
+                  style={styles.textInput}
+                  type="email"
+                  value={forgotEmail}
+                  onChange={(e) => setForgotEmail(e.target.value)}
+                  placeholder="marie@exemple.com"
+                  autoFocus
+                  onKeyDown={(e) => e.key === "Enter" && submitForgot()}
+                />
+                <button
+                  style={{ ...styles.primaryBtn, width: "100%" }}
+                  disabled={!forgotEmailValid || forgotLoading}
+                  onClick={submitForgot}
+                >
+                  {forgotLoading ? "Envoi..." : "Recevoir un nouveau code"}
+                </button>
+              </>
+            ) : (
+              <button style={{ ...styles.secondaryBtn, width: "100%" }} onClick={() => { setShowForgot(false); setForgotSent(false); setForgotEmail(""); }}>
+                Retour à la connexion
+              </button>
+            )}
+            {!forgotSent && (
+              <button style={{ ...styles.linkBtn, marginTop: 12 }} onClick={() => setShowForgot(false)}>
+                ← Retour à la connexion
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ ...styles.app, alignItems: "center", justifyContent: "center", display: "flex", minHeight: "100%" }}>
@@ -975,6 +1076,9 @@ function ClientLogin({ onLogin, onChoose, onChangeRole }) {
           {error && <div style={{ color: COLORS.danger, fontSize: 12, marginBottom: 10 }}>{error}</div>}
                   <button style={{ ...styles.primaryBtn, width: "100%" }} onClick={submit} disabled={loading}>
             {loading ? "Connexion..." : "Accéder à mon suivi"}
+          </button>
+          <button style={{ ...styles.linkBtn, marginTop: 12, display: "block", textAlign: "center", width: "100%" }} onClick={() => setShowForgot(true)}>
+            Code oublié ?
           </button>
         </div>
       </div>
@@ -1156,7 +1260,7 @@ function groupExIdsByZoneMulti(exIds, exercises) {
   return order.map((label) => [label, byZone[label]]);
 }
 
-function ProfileView({ profile, profileLoaded, persistProfile, activeClient, role, sessionsCount, bookings, assignAccompagnement, setAccompagnementOffset, assignTypeSeance, addManualBooking, deleteManualBooking }) {
+function ProfileView({ profile, profileLoaded, persistProfile, activeClient, role, sessionsCount, bookings, assignAccompagnement, setAccompagnementOffset, assignTypeSeance, addManualBooking, deleteManualBooking, onChangePin }) {
   const [local, setLocal] = useState(profile || {});
   const [dirty, setDirty] = useState(false);
   const [editingOffset, setEditingOffset] = useState(false);
@@ -1164,6 +1268,13 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
   const [showManualBooking, setShowManualBooking] = useState(false);
   const [manualDateTime, setManualDateTime] = useState("");
   const [manualStatus, setManualStatus] = useState("effectuee");
+  const [showChangePin, setShowChangePin] = useState(false);
+  const [oldPinInput, setOldPinInput] = useState("");
+  const [newPinInput, setNewPinInput] = useState("");
+  const [newPinConfirm, setNewPinConfirm] = useState("");
+  const [pinError, setPinError] = useState("");
+  const [pinSuccess, setPinSuccess] = useState(false);
+  const [pinLoading, setPinLoading] = useState(false);
   const isCoach = role === "coach";
   const accompagnementOptions = [5, 10, 20, 40];
   const total = activeClient ? activeClient.accompagnementTotal : null;
@@ -1195,6 +1306,32 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
     setShowManualBooking(false);
     setManualDateTime("");
     setManualStatus("effectuee");
+  };
+
+  const submitChangePin = async () => {
+    setPinError("");
+    if (oldPinInput.length !== 4 || newPinInput.length !== 4) {
+      setPinError("Le code actuel et le nouveau code doivent faire 4 chiffres.");
+      return;
+    }
+    if (newPinInput !== newPinConfirm) {
+      setPinError("Les deux nouveaux codes ne correspondent pas.");
+      return;
+    }
+    setPinLoading(true);
+    const result = await onChangePin(oldPinInput, newPinInput);
+    setPinLoading(false);
+    if (result.status === "ok") {
+      setPinSuccess(true);
+      setOldPinInput("");
+      setNewPinInput("");
+      setNewPinConfirm("");
+      setTimeout(() => { setPinSuccess(false); setShowChangePin(false); }, 2000);
+    } else if (result.status === "wrong_pin") {
+      setPinError("Le code actuel est incorrect.");
+    } else {
+      setPinError("Erreur, réessaie.");
+    }
   };
 
   return (
@@ -1466,6 +1603,59 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
           </div>
         ))}
       </div>
+
+      {!isCoach && (
+        <div style={{ marginTop: 24 }}>
+          {!showChangePin ? (
+            <button style={styles.secondaryBtn} onClick={() => setShowChangePin(true)}>
+              Modifier mon code d'accès
+            </button>
+          ) : (
+            <div style={styles.card}>
+              <div style={{ fontFamily: FONT_DISPLAY, fontSize: 15, color: COLORS.text, marginBottom: 12 }}>
+                Modifier mon code d'accès
+              </div>
+              {pinSuccess ? (
+                <div style={{ color: COLORS.accent, fontSize: 13, fontWeight: 600 }}>✓ Code modifié avec succès.</div>
+              ) : (
+                <>
+                  <label style={styles.fieldLabel}>Code actuel</label>
+                  <input
+                    style={styles.textInput}
+                    value={oldPinInput}
+                    onChange={(e) => setOldPinInput(e.target.value.replace(/\D/g, "").slice(0, 4))}
+                    inputMode="numeric"
+                  />
+                  <label style={styles.fieldLabel}>Nouveau code (4 chiffres)</label>
+                  <input
+                    style={styles.textInput}
+                    value={newPinInput}
+                    onChange={(e) => setNewPinInput(e.target.value.replace(/\D/g, "").slice(0, 4))}
+                    inputMode="numeric"
+                  />
+                  <label style={styles.fieldLabel}>Confirme le nouveau code</label>
+                  <input
+                    style={styles.textInput}
+                    value={newPinConfirm}
+                    onChange={(e) => setNewPinConfirm(e.target.value.replace(/\D/g, "").slice(0, 4))}
+                    inputMode="numeric"
+                    onKeyDown={(e) => e.key === "Enter" && submitChangePin()}
+                  />
+                  {pinError && <div style={{ color: COLORS.danger, fontSize: 12, marginBottom: 10 }}>{pinError}</div>}
+                  <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+                    <button style={styles.secondaryBtn} onClick={() => { setShowChangePin(false); setPinError(""); setOldPinInput(""); setNewPinInput(""); setNewPinConfirm(""); }}>
+                      Annuler
+                    </button>
+                    <button style={styles.primaryBtn} onClick={submitChangePin} disabled={pinLoading}>
+                      {pinLoading ? "..." : "Valider"}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
