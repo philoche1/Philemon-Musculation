@@ -730,7 +730,7 @@ bookings={bookings}
               />
             )}
             {view === "seances" && (
-              <SeanceTypesView data={data} persistLibrary={persistLibrary} role={roleEffectif} />
+              <SeanceTypesView data={data} persistLibrary={persistLibrary} role={roleEffectif} activeClient={activeClient} />
             )}
             {view === "exercices" && (
               <ExercisesView data={data} persistLibrary={persistLibrary} role={roleEffectif} />
@@ -5156,6 +5156,14 @@ function ProgrammesView({ data, persistLibrary, role, activeClient, assignProgra
   data.ctTypes.forEach((c) => (ctMap[c.id] = c));
   const exMapLocal = exMap(data);
 
+  // Le client ne voit que son propre programme assigné, pas le catalogue complet
+  const programsVisibles = isCoach
+    ? data.programs
+    : data.programs.filter((p) => activeClient && p.id === activeClient.programId);
+  const ctProgramsVisibles = isCoach
+    ? data.ctPrograms
+    : data.ctPrograms.filter((p) => activeClient && p.id === activeClient.ctProgramId);
+
   const addProgram = (pr) => {
     const newLib = { ...data, programs: [...data.programs, { id: uid("pr"), ...pr }] };
     persistLibrary({ exercises: newLib.exercises, seanceTypes: newLib.seanceTypes, programs: newLib.programs, ctTypes: newLib.ctTypes, ctPrograms: newLib.ctPrograms, alimentationVideos: newLib.alimentationVideos, ctLevelNames: newLib.ctLevelNames });
@@ -5226,7 +5234,10 @@ function ProgrammesView({ data, persistLibrary, role, activeClient, assignProgra
       )}
 
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        {data.programs.map((pr) => {
+        {!isCoach && programsVisibles.length === 0 && (
+          <div style={styles.emptyState}>Aucun programme assigné pour l'instant.</div>
+        )}
+        {programsVisibles.map((pr) => {
           const isAssigned = activeClient && activeClient.programId === pr.id;
           if (isCoach && editingProgramId === pr.id) {
             return (
@@ -5310,10 +5321,10 @@ function ProgrammesView({ data, persistLibrary, role, activeClient, assignProgra
       )}
 
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        {data.ctPrograms.length === 0 && (
-          <div style={styles.emptyState}>Aucun programme CT créé pour l'instant.</div>
+        {ctProgramsVisibles.length === 0 && (
+          <div style={styles.emptyState}>{isCoach ? "Aucun programme CT créé pour l'instant." : "Aucun programme CT assigné pour l'instant."}</div>
         )}
-        {data.ctPrograms.map((pr) => {
+        {ctProgramsVisibles.map((pr) => {
           const isAssigned = activeClient && activeClient.ctProgramId === pr.id;
           if (isCoach && editingCTProgramId === pr.id) {
             return (
@@ -5377,7 +5388,7 @@ function groupSeanceTypesByCategory(seanceTypes) {
   return SEANCE_CATEGORY_ORDER.map((cat) => [cat, byCat[cat] || []]).filter(([, list]) => list.length > 0);
 }
 
-function SeanceTypesView({ data, persistLibrary, role }) {
+function SeanceTypesView({ data, persistLibrary, role, activeClient }) {
   const [showNewSeance, setShowNewSeance] = useState(false);
   const [editingSeanceTypeId, setEditingSeanceTypeId] = useState(null);
   const [showNewCT, setShowNewCT] = useState(false);
@@ -5414,7 +5425,20 @@ function SeanceTypesView({ data, persistLibrary, role }) {
     setEditingCTTypeId(null);
   };
 
-  const grouped = groupSeanceTypesByCategory(data.seanceTypes);
+  // Le client ne voit que les séances/circuits inclus dans son programme assigné
+  let seanceTypesVisibles = data.seanceTypes;
+  let ctTypesVisibles = data.ctTypes;
+  if (!isCoach) {
+    const programme = activeClient ? data.programs.find((p) => p.id === activeClient.programId) : null;
+    const idsAutorises = programme ? programme.seanceTypeIds : [];
+    seanceTypesVisibles = data.seanceTypes.filter((st) => idsAutorises.includes(st.id));
+
+    const ctProgramme = activeClient ? data.ctPrograms.find((p) => p.id === activeClient.ctProgramId) : null;
+    const ctIdsAutorises = ctProgramme ? ctProgramme.ctTypeIds : [];
+    ctTypesVisibles = data.ctTypes.filter((ct) => ctIdsAutorises.includes(ct.id));
+  }
+
+  const grouped = groupSeanceTypesByCategory(seanceTypesVisibles);
 
   return (
     <div>
@@ -5426,6 +5450,9 @@ function SeanceTypesView({ data, persistLibrary, role }) {
       </div>
       {isCoach && showNewSeance && (
         <NewSeanceTypeForm data={data} onCancel={() => setShowNewSeance(false)} onSave={addSeanceType} />
+      )}
+      {!isCoach && grouped.length === 0 && (
+        <div style={{ ...styles.emptyState, marginTop: 16 }}>Aucune séance dans ton programme pour l'instant.</div>
       )}
       {grouped.map(([category, list]) => (
         <div key={category} style={{ marginTop: 16 }}>
@@ -5468,10 +5495,10 @@ function SeanceTypesView({ data, persistLibrary, role }) {
         <NewCTTypeForm data={data} onCancel={() => setShowNewCT(false)} onSave={addCTType} />
       )}
       <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 12 }}>
-        {data.ctTypes.length === 0 && (
-          <div style={styles.emptyState}>Aucun circuit CT créé pour l'instant.</div>
+        {ctTypesVisibles.length === 0 && (
+          <div style={styles.emptyState}>{isCoach ? "Aucun circuit CT créé pour l'instant." : "Aucun circuit CT dans ton programme pour l'instant."}</div>
         )}
-        {data.ctTypes.map((ct) =>
+        {ctTypesVisibles.map((ct) =>
           isCoach && editingCTTypeId === ct.id ? (
             <EditCTTypeForm
               key={ct.id}
