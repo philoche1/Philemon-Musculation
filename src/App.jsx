@@ -5760,7 +5760,12 @@ function SeanceTypesView({ data, persistLibrary, role, activeClient }) {
               ) : (
                 <div key={st.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "8px 12px", background: COLORS.bg2, borderRadius: 8 }}>
                   <div>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: COLORS.text }}>{st.nom}</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: COLORS.text }}>{st.nom}</div>
+                      <span style={styles.pill}>
+                        {(st.mode || "presentiel") === "presentiel" ? "Présentiel" : st.lieu === "maison" ? "Distanciel · Maison" : "Distanciel · Salle"}
+                      </span>
+                    </div>
                     <div style={{ fontSize: 11, color: COLORS.textFaint }}>{st.exerciceIds.length} exercice{st.exerciceIds.length > 1 ? "s" : ""}</div>
                   </div>
                   {isCoach && (
@@ -6005,11 +6010,11 @@ function NewProgramForm({ data, onCancel, onSave }) {
   const [mode, setMode] = useState("presentiel");
   const [lieu, setLieu] = useState("salle");
   const toggle = (id) => setIds((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
-  const exercisesMap = exMap(data);
-  const estMaisonCompatible = (st) => st.exerciceIds.length > 0 && st.exerciceIds.every((exId) => exercisesMap[exId] && exercisesMap[exId].maison);
-  const seanceTypesDisponibles = mode === "distanciel" && lieu === "maison"
-    ? data.seanceTypes.filter(estMaisonCompatible)
-    : data.seanceTypes;
+  const seanceTypesDisponibles = data.seanceTypes.filter((st) => {
+    const stMode = st.mode || "presentiel";
+    if (mode === "presentiel") return stMode === "presentiel";
+    return stMode === "distanciel" && (st.lieu || "salle") === lieu;
+  });
   return (
     <div style={{ ...styles.card, marginBottom: 14 }}>
       <label style={styles.fieldLabel}>Nom du programme</label>
@@ -6046,18 +6051,16 @@ function NewProgramForm({ data, onCancel, onSave }) {
               Maison
             </button>
           </div>
-          {lieu === "maison" && (
-            <p style={{ fontSize: 11, color: COLORS.textFaint, marginTop: -6, marginBottom: 10 }}>
-              Seules les séances entièrement composées d'exercices faisables à la maison sont proposées ci-dessous.
-            </p>
-          )}
         </>
       )}
+      <p style={{ fontSize: 11, color: COLORS.textFaint, marginTop: -4, marginBottom: 8 }}>
+        Seules les séances taguées {mode === "presentiel" ? "Présentiel" : lieu === "maison" ? "Distanciel · Maison" : "Distanciel · Salle"} sont proposées ci-dessous.
+      </p>
       <label style={styles.fieldLabel}>Séances incluses</label>
       <div style={styles.checklist}>
         {seanceTypesDisponibles.length === 0 && (
           <div style={{ fontSize: 12, color: COLORS.textFaint, padding: "6px 2px" }}>
-            Aucune séance compatible maison pour l'instant. Coche "Faisable à la maison" sur les exercices concernés dans le catalogue.
+            Aucune séance de ce type pour l'instant. Crée d'abord une séance avec ce tag dans l'onglet "Séances".
           </div>
         )}
         {seanceTypesDisponibles.map((st) => (
@@ -6087,11 +6090,11 @@ function EditProgramForm({ data, program, onCancel, onSave }) {
   const [mode, setMode] = useState(program.mode || "presentiel");
   const [lieu, setLieu] = useState(program.lieu || "salle");
   const toggle = (id) => setIds((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
-  const exercisesMap = exMap(data);
-  const estMaisonCompatible = (st) => st.exerciceIds.length > 0 && st.exerciceIds.every((exId) => exercisesMap[exId] && exercisesMap[exId].maison);
-  const seanceTypesDisponibles = mode === "distanciel" && lieu === "maison"
-    ? data.seanceTypes.filter(estMaisonCompatible)
-    : data.seanceTypes;
+  const seanceTypesDisponibles = data.seanceTypes.filter((st) => {
+    const stMode = st.mode || "presentiel";
+    if (mode === "presentiel") return stMode === "presentiel";
+    return stMode === "distanciel" && (st.lieu || "salle") === lieu;
+  });
   return (
     <div style={{ ...styles.card, borderColor: COLORS.accent2 }}>
       <div style={{ fontFamily: FONT_DISPLAY, fontSize: 15, color: COLORS.text, marginBottom: 12 }}>Modifier le programme</div>
@@ -6129,18 +6132,16 @@ function EditProgramForm({ data, program, onCancel, onSave }) {
               Maison
             </button>
           </div>
-          {lieu === "maison" && (
-            <p style={{ fontSize: 11, color: COLORS.textFaint, marginTop: -6, marginBottom: 10 }}>
-              Seules les séances entièrement composées d'exercices faisables à la maison sont proposées ci-dessous.
-            </p>
-          )}
         </>
       )}
+      <p style={{ fontSize: 11, color: COLORS.textFaint, marginTop: -4, marginBottom: 8 }}>
+        Seules les séances taguées {mode === "presentiel" ? "Présentiel" : lieu === "maison" ? "Distanciel · Maison" : "Distanciel · Salle"} sont proposées ci-dessous.
+      </p>
       <label style={styles.fieldLabel}>Séances incluses</label>
       <div style={styles.checklist}>
         {seanceTypesDisponibles.length === 0 && (
           <div style={{ fontSize: 12, color: COLORS.textFaint, padding: "6px 2px" }}>
-            Aucune séance compatible maison pour l'instant. Coche "Faisable à la maison" sur les exercices concernés dans le catalogue.
+            Aucune séance de ce type pour l'instant. Crée d'abord une séance avec ce tag dans l'onglet "Séances".
           </div>
         )}
         {seanceTypesDisponibles.map((st) => (
@@ -6164,16 +6165,50 @@ function EditProgramForm({ data, program, onCancel, onSave }) {
   );
 }
 
+function TypeSeanceModeSelector({ mode, setMode, lieu, setLieu }) {
+  return (
+    <>
+      <label style={styles.fieldLabel}>Type de séance</label>
+      <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+        <button
+          type="button"
+          style={{ ...styles.secondaryBtn, ...(mode === "presentiel" ? { background: COLORS.accent, color: COLORS.bg, borderColor: COLORS.accent } : {}) }}
+          onClick={() => setMode("presentiel")}
+        >
+          Présentiel
+        </button>
+        <button
+          type="button"
+          style={{ ...styles.secondaryBtn, ...(mode === "distanciel" && lieu === "salle" ? { background: COLORS.accent2, color: COLORS.bg, borderColor: COLORS.accent2 } : {}) }}
+          onClick={() => { setMode("distanciel"); setLieu("salle"); }}
+        >
+          Distanciel · Salle
+        </button>
+        <button
+          type="button"
+          style={{ ...styles.secondaryBtn, ...(mode === "distanciel" && lieu === "maison" ? { background: COLORS.accent2, color: COLORS.bg, borderColor: COLORS.accent2 } : {}) }}
+          onClick={() => { setMode("distanciel"); setLieu("maison"); }}
+        >
+          Distanciel · Maison
+        </button>
+      </div>
+    </>
+  );
+}
+
 function NewSeanceTypeForm({ data, onCancel, onSave }) {
   const [nom, setNom] = useState("");
   const [selectedKeys, setSelectedKeys] = useState([]);
   const [niveauxByKey, setNiveauxByKey] = useState({});
+  const [mode, setMode] = useState("presentiel");
+  const [lieu, setLieu] = useState("salle");
   const toggleKey = (key) => setSelectedKeys((p) => (p.includes(key) ? p.filter((x) => x !== key) : [...p, key]));
   const exercisesMap = exMap(data);
   return (
     <div style={{ ...styles.card, marginTop: 10 }}>
       <label style={styles.fieldLabel}>Nom du type de séance</label>
       <input style={styles.textInput} value={nom} onChange={(e) => setNom(e.target.value)} placeholder="Ex: Full body E" />
+      <TypeSeanceModeSelector mode={mode} setMode={setMode} lieu={lieu} setLieu={setLieu} />
       <label style={styles.fieldLabel}>Exercices inclus</label>
       <p style={{ fontSize: 11, color: COLORS.textFaint, marginTop: -4, marginBottom: 8 }}>
         Un exercice présent dans plusieurs catégories peut être coché indépendamment dans chacune, avec son propre niveau.
@@ -6214,7 +6249,7 @@ function NewSeanceTypeForm({ data, onCancel, onSave }) {
           disabled={!nom}
           onClick={() => {
             const { exerciceIds, niveaux } = finalizeSelection(selectedKeys, niveauxByKey, exercisesMap);
-            onSave({ nom, exerciceIds, niveaux });
+            onSave({ nom, exerciceIds, niveaux, mode, lieu: mode === "distanciel" ? lieu : null });
           }}
         >
           Créer
@@ -6227,6 +6262,8 @@ function NewSeanceTypeForm({ data, onCancel, onSave }) {
 function EditSeanceTypeForm({ data, seanceType, onCancel, onSave }) {
   const [nom, setNom] = useState(seanceType.nom);
   const exercisesMap = exMap(data);
+  const [mode, setMode] = useState(seanceType.mode || "presentiel");
+  const [lieu, setLieu] = useState(seanceType.lieu || "salle");
   const [selectedKeys, setSelectedKeys] = useState(() =>
     seanceType.exerciceIds.map((exId) => selKey(exId, zoneLabel(getExerciseZones(exercisesMap[exId])[0])))
   );
@@ -6244,6 +6281,7 @@ function EditSeanceTypeForm({ data, seanceType, onCancel, onSave }) {
       <div style={{ fontFamily: FONT_DISPLAY, fontSize: 15, color: COLORS.text, marginBottom: 12 }}>Modifier la séance</div>
       <label style={styles.fieldLabel}>Nom du type de séance</label>
       <input style={styles.textInput} value={nom} onChange={(e) => setNom(e.target.value)} />
+      <TypeSeanceModeSelector mode={mode} setMode={setMode} lieu={lieu} setLieu={setLieu} />
       <label style={styles.fieldLabel}>Exercices inclus</label>
       <p style={{ fontSize: 11, color: COLORS.textFaint, marginTop: -4, marginBottom: 8 }}>
         Un exercice présent dans plusieurs catégories peut être coché indépendamment dans chacune, avec son propre niveau.
@@ -6284,7 +6322,7 @@ function EditSeanceTypeForm({ data, seanceType, onCancel, onSave }) {
           disabled={!nom}
           onClick={() => {
             const { exerciceIds, niveaux } = finalizeSelection(selectedKeys, niveauxByKey, exercisesMap);
-            onSave({ nom, exerciceIds, niveaux });
+            onSave({ nom, exerciceIds, niveaux, mode, lieu: mode === "distanciel" ? lieu : null });
           }}
         >
           Enregistrer
