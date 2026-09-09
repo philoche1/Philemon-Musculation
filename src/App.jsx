@@ -142,7 +142,7 @@ export default function App() {
   const [profile, setProfile] = useState(null);
   const [profileLoaded, setProfileLoaded] = useState(false);
 
-  const [view, setView] = useState("suivi");
+  const [view, setView] = useState("profil");
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState(null);
 
@@ -850,6 +850,7 @@ function CoachClientPicker({ clients, onChoose, onAdd, onDelete, onChangeRole, o
   const [email, setEmail] = useState("");
   const [pin, setPin] = useState(() => String(Math.floor(1000 + Math.random() * 9000)));
   const [typeSeance, setTypeSeance] = useState("1h");
+  const [showDashboard, setShowDashboard] = useState(false);
 
   const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 
@@ -858,11 +859,18 @@ function CoachClientPicker({ clients, onChoose, onAdd, onDelete, onChangeRole, o
     onAdd(name.trim(), email.trim().toLowerCase(), pin, typeSeance);
   };
 
+  if (showDashboard) {
+    return <CoachDashboard clients={clients} onBack={() => setShowDashboard(false)} />;
+  }
+
   return (
     <div style={{ ...styles.app, alignItems: "center", justifyContent: "center", display: "flex", minHeight: "100%" }}>
       <div style={{ maxWidth: 420, width: "100%", padding: 24 }}>
         <div style={{ fontFamily: FONT_DISPLAY, fontSize: 13, letterSpacing: 3, color: COLORS.accent, marginBottom: 8, textTransform: "uppercase", textAlign: "center" }}>
           Philémon Musculation
+        </div>
+        <div style={{ textAlign: "center", marginBottom: 8 }}>
+          <button style={styles.linkBtn} onClick={() => setShowDashboard(true)}>📊 Tableau de bord</button>
         </div>
         <h1 style={{ fontFamily: FONT_DISPLAY, fontSize: 24, color: COLORS.text, margin: "0 0 8px 0", textAlign: "center" }}>
           Quel client veux-tu suivre ?
@@ -952,6 +960,110 @@ function CoachClientPicker({ clients, onChoose, onAdd, onDelete, onChangeRole, o
             </div>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function CoachDashboard({ clients, onBack }) {
+  const [loading, setLoading] = useState(true);
+  const [stats, setStats] = useState(null);
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      const now = new Date();
+      const debutMois = new Date(now.getFullYear(), now.getMonth(), 1);
+
+      const bookingsParClient = await Promise.all(
+        clients.map(async (c) => {
+          try {
+            const r = await window.storage.get(bookingsKey(c.id), true);
+            return r && r.value ? JSON.parse(r.value) : [];
+          } catch (e) {
+            return [];
+          }
+        })
+      );
+
+      let seancesCeMoisCi = 0;
+      const packsBientotEpuises = [];
+      let clientsActifs = 0;
+
+      clients.forEach((c, i) => {
+        const bookings = bookingsParClient[i] || [];
+        const effectuees = bookings.filter((b) => b.status !== "annulee" && new Date(b.start_time) <= now);
+
+        seancesCeMoisCi += effectuees.filter((b) => new Date(b.start_time) >= debutMois).length;
+
+        if (c.accompagnementTotal != null) {
+          clientsActifs += 1;
+          const offset = c.accompagnementOffset || 0;
+          const used = offset + effectuees.length;
+          const restant = c.accompagnementTotal - used;
+          if (restant <= 3) {
+            packsBientotEpuises.push({ name: c.name, restant });
+          }
+        }
+      });
+
+      packsBientotEpuises.sort((a, b) => a.restant - b.restant);
+
+      setStats({ clientsActifs, seancesCeMoisCi, packsBientotEpuises });
+      setLoading(false);
+    })();
+  }, [clients]);
+
+  return (
+    <div style={{ ...styles.app, minHeight: "100%" }}>
+      <div style={{ maxWidth: 520, width: "100%", margin: "0 auto", padding: 24 }}>
+        <div style={{ fontFamily: FONT_DISPLAY, fontSize: 13, letterSpacing: 3, color: COLORS.accent, marginBottom: 8, textTransform: "uppercase", textAlign: "center" }}>
+          Philémon Musculation
+        </div>
+        <h1 style={{ fontFamily: FONT_DISPLAY, fontSize: 24, color: COLORS.text, margin: "0 0 20px 0", textAlign: "center" }}>
+          Tableau de bord
+        </h1>
+
+        {loading ? (
+          <div style={styles.emptyState}>Chargement des statistiques…</div>
+        ) : (
+          <>
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 20 }}>
+              <div style={{ ...styles.card, flex: "1 1 140px", textAlign: "center" }}>
+                <div style={{ fontFamily: FONT_DISPLAY, fontSize: 32, color: COLORS.accent }}>{stats.clientsActifs}</div>
+                <div style={{ fontSize: 12, color: COLORS.textDim, marginTop: 4 }}>Clients actifs</div>
+              </div>
+              <div style={{ ...styles.card, flex: "1 1 140px", textAlign: "center" }}>
+                <div style={{ fontFamily: FONT_DISPLAY, fontSize: 32, color: COLORS.accent }}>{stats.seancesCeMoisCi}</div>
+                <div style={{ fontSize: 12, color: COLORS.textDim, marginTop: 4 }}>Séances ce mois-ci</div>
+              </div>
+            </div>
+
+            <div style={styles.card}>
+              <div style={{ fontSize: 11, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 12 }}>
+                Packs bientôt épuisés (≤ 3 séances restantes)
+              </div>
+              {stats.packsBientotEpuises.length === 0 ? (
+                <div style={{ fontSize: 13, color: COLORS.textFaint }}>Aucun pack proche de la fin pour l'instant.</div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {stats.packsBientotEpuises.map((p, i) => (
+                    <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 10px", background: COLORS.bg2, borderRadius: 8 }}>
+                      <span style={{ fontSize: 13, color: COLORS.text, fontWeight: 600 }}>{p.name}</span>
+                      <span style={{ fontSize: 12, color: p.restant <= 0 ? COLORS.danger : COLORS.accent2, fontWeight: 700 }}>
+                        {p.restant <= 0 ? "Dépassé" : `${p.restant} restante${p.restant > 1 ? "s" : ""}`}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
+        <div style={{ textAlign: "center", marginTop: 20 }}>
+          <button style={styles.secondaryBtn} onClick={onBack}>← Retour à la liste des clients</button>
+        </div>
       </div>
     </div>
   );
