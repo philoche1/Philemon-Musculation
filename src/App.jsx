@@ -1675,7 +1675,7 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
             ))}
           </div>
         )}
-        {totalPresentiel ? (
+        {totalPresentiel != null && (
           <div>
             <div style={{ fontFamily: FONT_DISPLAY, fontSize: 24, color: overLimitPresentiel ? COLORS.danger : COLORS.text }}>
               {usedPresentiel} / {totalPresentiel}
@@ -1713,26 +1713,26 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
                 ⚠️ Le forfait présentiel est dépassé — pense à renouveler l'accompagnement.
               </div>
             )}
-            
-             <a         
-              href={LIENS_CALENDLY[activeClient.typeSeance || "1h"]}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{
-                ...styles.primaryBtn,
-                display: "inline-block",
-                textDecoration: "none",
-                marginTop: 12,
-              }}
-            >
-              Réserver un créneau
-            </a>
-          </div>
-        ) : (
-          <div style={{ fontSize: 13, color: COLORS.textFaint }}>
-            {isCoach ? "Définis un total ci-dessus." : "Aucun accompagnement présentiel assigné pour l'instant."}
           </div>
         )}
+        {!isCoach && totalPresentiel == null && (
+          <div style={{ fontSize: 13, color: COLORS.textFaint, marginBottom: 4 }}>
+            Séances à la carte, sans forfait particulier.
+          </div>
+        )}
+        <a         
+          href={LIENS_CALENDLY[activeClient.typeSeance || "1h"]}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            ...styles.primaryBtn,
+            display: "inline-block",
+            textDecoration: "none",
+            marginTop: 12,
+          }}
+        >
+          Réserver un créneau
+        </a>
       </div>
 
       <div style={{ ...styles.card, marginBottom: 16, borderColor: overLimitDistanciel ? COLORS.danger : COLORS.accent2 }}>
