@@ -792,6 +792,7 @@ bookings={bookings}
                 validateDistancielSession={validateDistancielSession}
                 onChangePin={changePin}
                 assignPalier={assignPalier}
+                onGoToSuivi={() => setView("suivi")}
               />
             )}
             {view === "suivi" && (
@@ -802,6 +803,7 @@ bookings={bookings}
                 activeClient={activeClient}
                 deleteProgrammeHistorique={deleteProgrammeHistorique}
                 deleteProgrammeDistancielHistorique={deleteProgrammeDistancielHistorique}
+                validateDistancielSession={validateDistancielSession}
               />
             )}
             {view === "progression" && <ProgressionView data={data} />}
@@ -1556,7 +1558,7 @@ function PalierFrise({ palierActuel }) {
   );
 }
 
-function ProfileView({ profile, profileLoaded, persistProfile, activeClient, role, presentielCount, distancielCount, bookings, assignAccompagnementPresentiel, setAccompagnementOffsetPresentiel, assignAccompagnementDistanciel, setAccompagnementOffsetDistanciel, assignTypeSeance, addManualBooking, deleteManualBooking, validateDistancielSession, onChangePin, assignPalier }) {
+function ProfileView({ profile, profileLoaded, persistProfile, activeClient, role, presentielCount, distancielCount, bookings, assignAccompagnementPresentiel, setAccompagnementOffsetPresentiel, assignAccompagnementDistanciel, setAccompagnementOffsetDistanciel, assignTypeSeance, addManualBooking, deleteManualBooking, validateDistancielSession, onChangePin, assignPalier, onGoToSuivi }) {
   const [local, setLocal] = useState(profile || {});
   const [dirty, setDirty] = useState(false);
   const [editingOffsetPresentiel, setEditingOffsetPresentiel] = useState(false);
@@ -1895,13 +1897,9 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
 
             <button
               style={{ ...styles.primaryBtn, marginTop: 12 }}
-              onClick={() => {
-                if (window.confirm("Valider une séance distancielle effectuée aujourd'hui ?")) {
-                  validateDistancielSession();
-                }
-              }}
+              onClick={onGoToSuivi}
             >
-              ✓ Valider ma séance du jour
+              ▶ Démarrer ma séance
             </button>
           </div>
         ) : (
@@ -2135,7 +2133,7 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
   );
 }
 
-function SuiviView({ data, persistSessions, role, activeClient, deleteProgrammeHistorique, deleteProgrammeDistancielHistorique }) {
+function SuiviView({ data, persistSessions, role, activeClient, deleteProgrammeHistorique, deleteProgrammeDistancielHistorique, validateDistancielSession }) {
   const exercises = exMap(data);
   const [expanded, setExpanded] = useState(null);
   const [showNew, setShowNew] = useState(false);
@@ -2190,9 +2188,18 @@ function SuiviView({ data, persistSessions, role, activeClient, deleteProgrammeH
     return progs.map((p) => p.nom).join(" / ");
   };
 
+  const isDistancielSeance = (seanceNom) => {
+    if (!seanceNom) return false;
+    const st = data.seanceTypes.find((s) => s.nom === seanceNom);
+    return !!st && st.mode === "distanciel";
+  };
+
   const startFromTemplate = (seanceType) => {
     const entries = makeEntries(seanceType.exerciceIds, exercises);
     addSession({ id: uid("se"), date: quickDate, seanceNom: seanceType.nom, entries, niveaux: seanceType.niveaux || {} });
+    if (seanceType.mode === "distanciel") {
+      validateDistancielSession();
+    }
   };
 
   return (
@@ -2355,6 +2362,7 @@ function SuiviView({ data, persistSessions, role, activeClient, deleteProgrammeH
             exercises={exercises}
             allSessions={data.sessions}
             programName={programNameForSeance(session.seanceNom)}
+            isDistanciel={isDistancielSeance(session.seanceNom)}
             expanded={expanded === session.id}
             onToggle={() => setExpanded(expanded === session.id ? null : session.id)}
             onExpand={() => setExpanded(session.id)}
@@ -2913,7 +2921,7 @@ function groupBySeries(entries) {
 const DEFAULT_BILAN = { difficulte: null, sensation: null, douleur: "", remarque: "" };
 const DEFAULT_BILAN_AVANT = { forme: null, sommeil: null, alimentation: null, douleur: "", remarque: "" };
 
-function SessionCard({ session, exercises, allSessions, programName, expanded, onToggle, onExpand, onSave, onDelete }) {
+function SessionCard({ session, exercises, allSessions, programName, isDistanciel, expanded, onToggle, onExpand, onSave, onDelete }) {
   const [local, setLocal] = useState(session.entries);
   const [dirty, setDirty] = useState(false);
   const [bilan, setBilan] = useState(session.bilan || DEFAULT_BILAN);
@@ -3037,6 +3045,11 @@ function SessionCard({ session, exercises, allSessions, programName, expanded, o
             <div style={{ fontSize: 12, color: COLORS.textDim }}>
               {exIds.length} exercice{exIds.length > 1 ? "s" : ""}
               {programName && <span style={{ color: COLORS.accent2 }}> · {programName}</span>}
+              {isDistanciel && (
+                <span style={{ marginLeft: 6, fontSize: 11, padding: "2px 8px", borderRadius: 12, background: "rgba(255,176,102,0.14)", color: COLORS.accent2, fontWeight: 600 }}>
+                  Distanciel
+                </span>
+              )}
             </div>
           </div>
           <button
