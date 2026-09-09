@@ -466,19 +466,37 @@ useEffect(() => {
     try { await window.storage.set(CLIENTS_KEY, JSON.stringify(newClients), true); } catch (e) {}
   }, [clientId, clients]);
 
-  const assignAccompagnement = useCallback(async (total) => {
+  const assignAccompagnementPresentiel = useCallback(async (total) => {
     if (!clientId) return;
     const newClients = clients.map((c) =>
-      c.id === clientId ? { ...c, accompagnementTotal: total || null } : c
+      c.id === clientId ? { ...c, accompagnementPresentielTotal: total || null } : c
     );
     setClients(newClients);
     try { await window.storage.set(CLIENTS_KEY, JSON.stringify(newClients), true); } catch (e) {}
   }, [clientId, clients]);
 
-  const setAccompagnementOffset = useCallback(async (offset) => {
+  const setAccompagnementOffsetPresentiel = useCallback(async (offset) => {
     if (!clientId) return;
     const newClients = clients.map((c) =>
-      c.id === clientId ? { ...c, accompagnementOffset: Math.max(0, offset) } : c
+      c.id === clientId ? { ...c, accompagnementPresentielOffset: Math.max(0, offset) } : c
+    );
+    setClients(newClients);
+    try { await window.storage.set(CLIENTS_KEY, JSON.stringify(newClients), true); } catch (e) {}
+  }, [clientId, clients]);
+
+  const assignAccompagnementDistanciel = useCallback(async (total) => {
+    if (!clientId) return;
+    const newClients = clients.map((c) =>
+      c.id === clientId ? { ...c, accompagnementDistancielTotal: total || null } : c
+    );
+    setClients(newClients);
+    try { await window.storage.set(CLIENTS_KEY, JSON.stringify(newClients), true); } catch (e) {}
+  }, [clientId, clients]);
+
+  const setAccompagnementOffsetDistanciel = useCallback(async (offset) => {
+    if (!clientId) return;
+    const newClients = clients.map((c) =>
+      c.id === clientId ? { ...c, accompagnementDistancielOffset: Math.max(0, offset) } : c
     );
     setClients(newClients);
     try { await window.storage.set(CLIENTS_KEY, JSON.stringify(newClients), true); } catch (e) {}
@@ -533,14 +551,15 @@ useEffect(() => {
   }, [clientId]);
 
   // Permet au coach d'ajouter manuellement une séance faite hors Calendly
-  // (ex: séance découverte réglée en direct), pour qu'elle compte dans le pack.
-  const addManualBooking = useCallback(async (dateTimeISO, status) => {
+  // (ex: séance découverte réglée en direct, ou séance distancielle), pour qu'elle compte dans le pack.
+  const addManualBooking = useCallback(async (dateTimeISO, status, type) => {
     if (!clientId) return;
     setSaving(true);
     const newBooking = {
       uri: uid("manual"),
       start_time: dateTimeISO,
       status: status || "effectuee",
+      type: type || "presentiel",
       manual: true,
     };
     const newBookings = [...(bookings || []), newBooking];
@@ -548,6 +567,29 @@ useEffect(() => {
     try {
       await window.storage.set(bookingsKey(clientId), JSON.stringify(newBookings), true);
       setToast("Séance ajoutée");
+    } catch (e) {
+      setToast("Erreur d'enregistrement, réessaie");
+    }
+    setSaving(false);
+    setTimeout(() => setToast(null), 1800);
+  }, [clientId, bookings]);
+
+  // Auto-validation d'une séance distancielle par le client lui-même (un clic, date du jour)
+  const validateDistancielSession = useCallback(async () => {
+    if (!clientId) return;
+    setSaving(true);
+    const newBooking = {
+      uri: uid("distanciel"),
+      start_time: new Date().toISOString(),
+      status: "effectuee",
+      type: "distanciel",
+      manual: true,
+    };
+    const newBookings = [...(bookings || []), newBooking];
+    setBookings(newBookings);
+    try {
+      await window.storage.set(bookingsKey(clientId), JSON.stringify(newBookings), true);
+      setToast("Séance distancielle validée");
     } catch (e) {
       setToast("Erreur d'enregistrement, réessaie");
     }
@@ -645,16 +687,24 @@ useEffect(() => {
                 activeClient={activeClient}
                 role={roleEffectif}
                 assignTypeSeance={assignTypeSeance}
-                sessionsCount={
+                presentielCount={
   (bookings || []).filter(
-    (b) => b.status !== "annulee" && new Date(b.start_time) <= new Date()
-  ).length              
+    (b) => b.status !== "annulee" && (b.type || "presentiel") === "presentiel" && new Date(b.start_time) <= new Date()
+  ).length
+}
+                distancielCount={
+  (bookings || []).filter(
+    (b) => b.status !== "annulee" && b.type === "distanciel" && new Date(b.start_time) <= new Date()
+  ).length
 }
 bookings={bookings} 
-                assignAccompagnement={assignAccompagnement}
-                setAccompagnementOffset={setAccompagnementOffset}
+                assignAccompagnementPresentiel={assignAccompagnementPresentiel}
+                setAccompagnementOffsetPresentiel={setAccompagnementOffsetPresentiel}
+                assignAccompagnementDistanciel={assignAccompagnementDistanciel}
+                setAccompagnementOffsetDistanciel={setAccompagnementOffsetDistanciel}
                 addManualBooking={addManualBooking}
                 deleteManualBooking={deleteManualBooking}
+                validateDistancielSession={validateDistancielSession}
                 onChangePin={changePin}
               />
             )}
@@ -993,17 +1043,25 @@ function CoachDashboard({ clients, onBack }) {
       clients.forEach((c, i) => {
         const bookings = bookingsParClient[i] || [];
         const effectuees = bookings.filter((b) => b.status !== "annulee" && new Date(b.start_time) <= now);
+        const effectueesPresentiel = effectuees.filter((b) => (b.type || "presentiel") === "presentiel");
+        const effectueesDistanciel = effectuees.filter((b) => b.type === "distanciel");
 
         seancesCeMoisCi += effectuees.filter((b) => new Date(b.start_time) >= debutMois).length;
 
-        if (c.accompagnementTotal != null) {
-          clientsActifs += 1;
-          const offset = c.accompagnementOffset || 0;
-          const used = offset + effectuees.length;
-          const restant = c.accompagnementTotal - used;
-          if (restant <= 3) {
-            packsBientotEpuises.push({ name: c.name, restant });
-          }
+        const totalPresentiel = c.accompagnementPresentielTotal != null ? c.accompagnementPresentielTotal : c.accompagnementTotal;
+        const totalDistanciel = c.accompagnementDistancielTotal;
+        const estActif = totalPresentiel != null || totalDistanciel != null;
+        if (estActif) clientsActifs += 1;
+
+        if (totalPresentiel != null) {
+          const offset = c.accompagnementPresentielOffset != null ? c.accompagnementPresentielOffset : (c.accompagnementOffset || 0);
+          const restant = totalPresentiel - (offset + effectueesPresentiel.length);
+          if (restant <= 3) packsBientotEpuises.push({ name: c.name, type: "Présentiel", restant });
+        }
+        if (totalDistanciel != null) {
+          const offset = c.accompagnementDistancielOffset || 0;
+          const restant = totalDistanciel - (offset + effectueesDistanciel.length);
+          if (restant <= 3) packsBientotEpuises.push({ name: c.name, type: "Distanciel", restant });
         }
       });
 
@@ -1049,7 +1107,7 @@ function CoachDashboard({ clients, onBack }) {
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   {stats.packsBientotEpuises.map((p, i) => (
                     <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 10px", background: COLORS.bg2, borderRadius: 8 }}>
-                      <span style={{ fontSize: 13, color: COLORS.text, fontWeight: 600 }}>{p.name}</span>
+                      <span style={{ fontSize: 13, color: COLORS.text, fontWeight: 600 }}>{p.name} <span style={{ fontSize: 11, color: COLORS.textFaint, fontWeight: 400 }}>({p.type})</span></span>
                       <span style={{ fontSize: 12, color: p.restant <= 0 ? COLORS.danger : COLORS.accent2, fontWeight: 700 }}>
                         {p.restant <= 0 ? "Dépassé" : `${p.restant} restante${p.restant > 1 ? "s" : ""}`}
                       </span>
@@ -1372,14 +1430,21 @@ function groupExIdsByZoneMulti(exIds, exercises) {
   return order.map((label) => [label, byZone[label]]);
 }
 
-function ProfileView({ profile, profileLoaded, persistProfile, activeClient, role, sessionsCount, bookings, assignAccompagnement, setAccompagnementOffset, assignTypeSeance, addManualBooking, deleteManualBooking, onChangePin }) {
+function ProfileView({ profile, profileLoaded, persistProfile, activeClient, role, presentielCount, distancielCount, bookings, assignAccompagnementPresentiel, setAccompagnementOffsetPresentiel, assignAccompagnementDistanciel, setAccompagnementOffsetDistanciel, assignTypeSeance, addManualBooking, deleteManualBooking, validateDistancielSession, onChangePin }) {
   const [local, setLocal] = useState(profile || {});
   const [dirty, setDirty] = useState(false);
-  const [editingOffset, setEditingOffset] = useState(false);
-  const [offsetInput, setOffsetInput] = useState("");
+  const [editingOffsetPresentiel, setEditingOffsetPresentiel] = useState(false);
+  const [offsetInputPresentiel, setOffsetInputPresentiel] = useState("");
+  const [editingTotalPresentiel, setEditingTotalPresentiel] = useState(false);
+  const [totalInputPresentiel, setTotalInputPresentiel] = useState("");
+  const [editingOffsetDistanciel, setEditingOffsetDistanciel] = useState(false);
+  const [offsetInputDistanciel, setOffsetInputDistanciel] = useState("");
+  const [editingTotalDistanciel, setEditingTotalDistanciel] = useState(false);
+  const [totalInputDistanciel, setTotalInputDistanciel] = useState("");
   const [showManualBooking, setShowManualBooking] = useState(false);
   const [manualDateTime, setManualDateTime] = useState("");
   const [manualStatus, setManualStatus] = useState("effectuee");
+  const [manualType, setManualType] = useState("presentiel");
   const [showChangePin, setShowChangePin] = useState(false);
   const [oldPinInput, setOldPinInput] = useState("");
   const [newPinInput, setNewPinInput] = useState("");
@@ -1388,11 +1453,22 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
   const [pinSuccess, setPinSuccess] = useState(false);
   const [pinLoading, setPinLoading] = useState(false);
   const isCoach = role === "coach";
-  const accompagnementOptions = [5, 10, 20, 40];
-  const total = activeClient ? activeClient.accompagnementTotal : null;
-  const offset = activeClient && activeClient.accompagnementOffset != null ? activeClient.accompagnementOffset : 0;
-  const used = offset + sessionsCount;
-  const overLimit = total != null && used > total;
+
+  // Compatibilité : les clients créés avant la distinction présentiel/distanciel
+  // n'ont que les anciens champs accompagnementTotal/accompagnementOffset, traités comme présentiel.
+  const totalPresentiel = activeClient
+    ? (activeClient.accompagnementPresentielTotal != null ? activeClient.accompagnementPresentielTotal : activeClient.accompagnementTotal)
+    : null;
+  const offsetPresentiel = activeClient
+    ? (activeClient.accompagnementPresentielOffset != null ? activeClient.accompagnementPresentielOffset : (activeClient.accompagnementOffset || 0))
+    : 0;
+  const usedPresentiel = offsetPresentiel + presentielCount;
+  const overLimitPresentiel = totalPresentiel != null && usedPresentiel > totalPresentiel;
+
+  const totalDistanciel = activeClient ? activeClient.accompagnementDistancielTotal : null;
+  const offsetDistanciel = activeClient && activeClient.accompagnementDistancielOffset != null ? activeClient.accompagnementDistancielOffset : 0;
+  const usedDistanciel = offsetDistanciel + distancielCount;
+  const overLimitDistanciel = totalDistanciel != null && usedDistanciel > totalDistanciel;
 
   
   const updateField = (key, value) => {
@@ -1400,24 +1476,52 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
     setDirty(true);
   };
 
-  const startEditOffset = () => {
-    setOffsetInput(String(offset));
-    setEditingOffset(true);
+  const startEditOffsetPresentiel = () => {
+    setOffsetInputPresentiel(String(offsetPresentiel));
+    setEditingOffsetPresentiel(true);
+  };
+  const saveOffsetPresentiel = () => {
+    setAccompagnementOffsetPresentiel(Math.max(0, Math.round(Number(offsetInputPresentiel)) || 0));
+    setEditingOffsetPresentiel(false);
   };
 
-  const saveOffset = () => {
-    const n = Math.max(0, Math.round(Number(offsetInput)) || 0);
-    setAccompagnementOffset(n);
-    setEditingOffset(false);
+  const startEditTotalPresentiel = () => {
+    setTotalInputPresentiel(totalPresentiel != null ? String(totalPresentiel) : "");
+    setEditingTotalPresentiel(true);
+  };
+  const saveTotalPresentiel = () => {
+    const n = Math.round(Number(totalInputPresentiel));
+    assignAccompagnementPresentiel(n > 0 ? n : null);
+    setEditingTotalPresentiel(false);
+  };
+
+  const startEditOffsetDistanciel = () => {
+    setOffsetInputDistanciel(String(offsetDistanciel));
+    setEditingOffsetDistanciel(true);
+  };
+  const saveOffsetDistanciel = () => {
+    setAccompagnementOffsetDistanciel(Math.max(0, Math.round(Number(offsetInputDistanciel)) || 0));
+    setEditingOffsetDistanciel(false);
+  };
+
+  const startEditTotalDistanciel = () => {
+    setTotalInputDistanciel(totalDistanciel != null ? String(totalDistanciel) : "");
+    setEditingTotalDistanciel(true);
+  };
+  const saveTotalDistanciel = () => {
+    const n = Math.round(Number(totalInputDistanciel));
+    assignAccompagnementDistanciel(n > 0 ? n : null);
+    setEditingTotalDistanciel(false);
   };
 
   const submitManualBooking = () => {
     if (!manualDateTime) return;
     const isoString = new Date(manualDateTime).toISOString();
-    addManualBooking(isoString, manualStatus);
+    addManualBooking(isoString, manualStatus, manualType);
     setShowManualBooking(false);
     setManualDateTime("");
     setManualStatus("effectuee");
+    setManualType("presentiel");
   };
 
   const submitChangePin = async () => {
@@ -1462,24 +1566,32 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
         </button>
       </div>
 
-      <div style={{ ...styles.card, marginBottom: 16, borderColor: overLimit ? COLORS.danger : COLORS.accent }}>
+      <div style={{ ...styles.card, marginBottom: 16, borderColor: overLimitPresentiel ? COLORS.danger : COLORS.accent }}>
         <div style={{ fontSize: 11, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 10 }}>
-          Accompagnement
+          Accompagnement présentiel
         </div>
         {isCoach && (
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-            {accompagnementOptions.map((n) => (
-              <button
-                key={n}
-                onClick={() => assignAccompagnement(total === n ? null : n)}
-                style={{
-                  ...styles.secondaryBtn,
-                  ...(total === n ? { background: COLORS.accent, color: COLORS.bg, borderColor: COLORS.accent } : {}),
-                }}
-              >
-                {n} séances
+          <div style={{ marginBottom: 12 }}>
+            {editingTotalPresentiel ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <label style={{ fontSize: 12, color: COLORS.textDim }}>Nombre de séances présentiel</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={totalInputPresentiel}
+                  onFocus={(e) => e.target.select()}
+                  onChange={(e) => setTotalInputPresentiel(e.target.value)}
+                  style={{ ...styles.numInput, width: 64 }}
+                  autoFocus
+                />
+                <button style={styles.secondaryBtn} onClick={saveTotalPresentiel}>Valider</button>
+                <button style={styles.linkBtn} onClick={() => setEditingTotalPresentiel(false)}>Annuler</button>
+              </div>
+            ) : (
+              <button style={styles.secondaryBtn} onClick={startEditTotalPresentiel}>
+                {totalPresentiel != null ? "Modifier le total présentiel" : "Définir un total présentiel"}
               </button>
-            ))}
+            )}
           </div>
         )}
                                <div style={{ fontSize: 12, color: COLORS.textDim, marginBottom: isCoach ? 6 : 12 }}>
@@ -1503,42 +1615,42 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
             ))}
           </div>
         )}
-        {total ? (
+        {totalPresentiel ? (
           <div>
-            <div style={{ fontFamily: FONT_DISPLAY, fontSize: 24, color: overLimit ? COLORS.danger : COLORS.text }}>
-              {used} / {total}
+            <div style={{ fontFamily: FONT_DISPLAY, fontSize: 24, color: overLimitPresentiel ? COLORS.danger : COLORS.text }}>
+              {usedPresentiel} / {totalPresentiel}
             </div>
             <div style={{ fontSize: 12, color: COLORS.textDim, marginTop: 4 }}>
               séances effectuées
-              {offset > 0 && <span> (dont {offset} déjà comptabilisée{offset > 1 ? "s" : ""} avant l'appli)</span>}
+              {offsetPresentiel > 0 && <span> (dont {offsetPresentiel} déjà comptabilisée{offsetPresentiel > 1 ? "s" : ""} avant l'appli)</span>}
             </div>
             {isCoach && (
               <div style={{ marginTop: 10 }}>
-                {editingOffset ? (
+                {editingOffsetPresentiel ? (
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <label style={{ fontSize: 12, color: COLORS.textDim }}>Séances déjà faites avant l'appli</label>
                     <input
                       type="number"
                       min={0}
-                      value={offsetInput}
+                      value={offsetInputPresentiel}
                       onFocus={(e) => e.target.select()}
-                      onChange={(e) => setOffsetInput(e.target.value)}
+                      onChange={(e) => setOffsetInputPresentiel(e.target.value)}
                       style={{ ...styles.numInput, width: 64 }}
                       autoFocus
                     />
-                    <button style={styles.secondaryBtn} onClick={saveOffset}>Valider</button>
-                    <button style={styles.linkBtn} onClick={() => setEditingOffset(false)}>Annuler</button>
+                    <button style={styles.secondaryBtn} onClick={saveOffsetPresentiel}>Valider</button>
+                    <button style={styles.linkBtn} onClick={() => setEditingOffsetPresentiel(false)}>Annuler</button>
                   </div>
                 ) : (
-                  <button style={styles.linkBtn} onClick={startEditOffset}>
+                  <button style={styles.linkBtn} onClick={startEditOffsetPresentiel}>
                     Ajuster le nombre de séances de départ
                   </button>
                 )}
               </div>
             )}
-                        {overLimit && (
+                        {overLimitPresentiel && (
               <div style={{ marginTop: 8, padding: "8px 12px", background: "rgba(255,107,107,0.1)", border: `1px solid ${COLORS.danger}`, borderRadius: 8, fontSize: 12, color: COLORS.danger, fontWeight: 600 }}>
-                ⚠️ Le forfait est dépassé — pense à renouveler l'accompagnement.
+                ⚠️ Le forfait présentiel est dépassé — pense à renouveler l'accompagnement.
               </div>
             )}
             
@@ -1558,7 +1670,92 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
           </div>
         ) : (
           <div style={{ fontSize: 13, color: COLORS.textFaint }}>
-            {isCoach ? "Choisis un accompagnement ci-dessus." : "Aucun accompagnement assigné pour l'instant."}
+            {isCoach ? "Définis un total ci-dessus." : "Aucun accompagnement présentiel assigné pour l'instant."}
+          </div>
+        )}
+      </div>
+
+      <div style={{ ...styles.card, marginBottom: 16, borderColor: overLimitDistanciel ? COLORS.danger : COLORS.accent2 }}>
+        <div style={{ fontSize: 11, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 10 }}>
+          Accompagnement distanciel
+        </div>
+        {isCoach && (
+          <div style={{ marginBottom: 12 }}>
+            {editingTotalDistanciel ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <label style={{ fontSize: 12, color: COLORS.textDim }}>Nombre de séances distanciel</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={totalInputDistanciel}
+                  onFocus={(e) => e.target.select()}
+                  onChange={(e) => setTotalInputDistanciel(e.target.value)}
+                  style={{ ...styles.numInput, width: 64 }}
+                  autoFocus
+                />
+                <button style={styles.secondaryBtn} onClick={saveTotalDistanciel}>Valider</button>
+                <button style={styles.linkBtn} onClick={() => setEditingTotalDistanciel(false)}>Annuler</button>
+              </div>
+            ) : (
+              <button style={styles.secondaryBtn} onClick={startEditTotalDistanciel}>
+                {totalDistanciel != null ? "Modifier le total distanciel" : "Définir un total distanciel"}
+              </button>
+            )}
+          </div>
+        )}
+        {totalDistanciel ? (
+          <div>
+            <div style={{ fontFamily: FONT_DISPLAY, fontSize: 24, color: overLimitDistanciel ? COLORS.danger : COLORS.text }}>
+              {usedDistanciel} / {totalDistanciel}
+            </div>
+            <div style={{ fontSize: 12, color: COLORS.textDim, marginTop: 4 }}>
+              séances validées
+              {offsetDistanciel > 0 && <span> (dont {offsetDistanciel} déjà comptabilisée{offsetDistanciel > 1 ? "s" : ""} avant l'appli)</span>}
+            </div>
+            {isCoach && (
+              <div style={{ marginTop: 10 }}>
+                {editingOffsetDistanciel ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <label style={{ fontSize: 12, color: COLORS.textDim }}>Séances déjà faites avant l'appli</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={offsetInputDistanciel}
+                      onFocus={(e) => e.target.select()}
+                      onChange={(e) => setOffsetInputDistanciel(e.target.value)}
+                      style={{ ...styles.numInput, width: 64 }}
+                      autoFocus
+                    />
+                    <button style={styles.secondaryBtn} onClick={saveOffsetDistanciel}>Valider</button>
+                    <button style={styles.linkBtn} onClick={() => setEditingOffsetDistanciel(false)}>Annuler</button>
+                  </div>
+                ) : (
+                  <button style={styles.linkBtn} onClick={startEditOffsetDistanciel}>
+                    Ajuster le nombre de séances de départ
+                  </button>
+                )}
+              </div>
+            )}
+                        {overLimitDistanciel && (
+              <div style={{ marginTop: 8, padding: "8px 12px", background: "rgba(255,107,107,0.1)", border: `1px solid ${COLORS.danger}`, borderRadius: 8, fontSize: 12, color: COLORS.danger, fontWeight: 600 }}>
+                ⚠️ Le forfait distanciel est dépassé — pense à renouveler l'accompagnement.
+              </div>
+            )}
+
+            <button
+              style={{ ...styles.primaryBtn, marginTop: 12 }}
+              onClick={() => {
+                if (window.confirm("Valider une séance distancielle effectuée aujourd'hui ?")) {
+                  validateDistancielSession();
+                }
+              }}
+            >
+              ✓ Valider ma séance du jour
+            </button>
+          </div>
+        ) : (
+          <div style={{ fontSize: 13, color: COLORS.textFaint }}>
+            {isCoach ? "Définis un total ci-dessus." : "Aucun accompagnement distanciel assigné pour l'instant."}
           </div>
         )}
       </div>
@@ -1586,6 +1783,17 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
                     onChange={(e) => setManualDateTime(e.target.value)}
                     style={{ ...styles.textInput, marginBottom: 0 }}
                   />
+                </div>
+                <div style={{ flex: "0 0 140px" }}>
+                  <label style={styles.fieldLabel}>Type</label>
+                  <select
+                    value={manualType}
+                    onChange={(e) => setManualType(e.target.value)}
+                    style={{ ...styles.textInput, marginBottom: 0 }}
+                  >
+                    <option value="presentiel">Présentiel</option>
+                    <option value="distanciel">Distanciel</option>
+                  </select>
                 </div>
                 <div style={{ flex: "0 0 140px" }}>
                   <label style={styles.fieldLabel}>Statut</label>
@@ -1647,17 +1855,23 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
                 <thead>
                   <tr>
                     <th style={styles.th}>Date</th>
+                    <th style={styles.th}>Type</th>
                     <th style={styles.th}>Statut</th>
-                    {isCoach && <th style={styles.th}></th>}
+                    <th style={styles.th}></th>
                   </tr>
                 </thead>
                 <tbody>
                   {historique.map((b, i) => {
                     const statut = STATUT_LABELS[b.status] || STATUT_LABELS.reservee;
+                    const typeLabel = (b.type || "presentiel") === "distanciel" ? "Distanciel" : "Présentiel";
+                    const peutSupprimer = b.manual && (isCoach || (b.type === "distanciel"));
                     return (
                       <tr key={i}>
                         <td style={styles.td}>
                           {new Date(b.start_time).toLocaleString("fr-FR", { day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                        </td>
+                        <td style={styles.td}>
+                          <span style={{ fontSize: 12, color: COLORS.textDim }}>{typeLabel}</span>
                         </td>
                         <td style={styles.td}>
                           <span
@@ -1673,22 +1887,20 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
                             {statut.label}
                           </span>
                         </td>
-                        {isCoach && (
-                          <td style={styles.td}>
-                            {b.manual && (
-                              <button
-                                style={styles.dangerLinkBtn}
-                                onClick={() => {
-                                  if (window.confirm("Supprimer cette séance de l'historique ?")) {
-                                    deleteManualBooking(b.uri);
-                                  }
-                                }}
-                              >
-                                Supprimer
-                              </button>
-                            )}
-                          </td>
-                        )}
+                        <td style={styles.td}>
+                          {peutSupprimer && (
+                            <button
+                              style={styles.dangerLinkBtn}
+                              onClick={() => {
+                                if (window.confirm("Supprimer cette séance de l'historique ?")) {
+                                  deleteManualBooking(b.uri);
+                                }
+                              }}
+                            >
+                              Supprimer
+                            </button>
+                          )}
+                        </td>
                       </tr>
                     );
                   })}
