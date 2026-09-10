@@ -1709,7 +1709,10 @@ function BilanCard({ bilan, onSave }) {
   };
 
   return (
-    <div style={styles.card}>
+    <div style={{ ...styles.card, borderColor: COLORS.accent }}>
+      <div style={{ textAlign: "center", fontFamily: FONT_DISPLAY, fontSize: 15, color: COLORS.accent, marginBottom: 14, paddingBottom: 10, borderBottom: `1px solid ${COLORS.cardBorder}` }}>
+        {bilan.nom} <span style={{ color: COLORS.textFaint, fontWeight: 400, fontSize: 13 }}>· {formatDateFR(bilan.date)}</span>
+      </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12, marginBottom: 16 }}>
         {PROFILE_FIELDS.filter((f) => !f.compact && (f.key === "passeSportif" || f.key === "presentSportif")).map((f) => (
           <div key={f.key}>
@@ -1850,8 +1853,10 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
     setBilans(list);
   }, [profile, profileLoaded]);
 
+  // Un seul bilan ouvert à la fois (mode accordéon), pour éviter de
+  // confondre les champs de plusieurs bilans affichés simultanément.
   const toggleBilanExpanded = (id) => {
-    setExpandedBilanIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+    setExpandedBilanIds((prev) => (prev.includes(id) ? [] : [id]));
   };
 
   const startNewBilan = () => {
