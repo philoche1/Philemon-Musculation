@@ -2470,15 +2470,29 @@ function restDurationForSet(serie) {
   return 120;
 }
 
-function RestTimer({ duration }) {
-  const [secondsLeft, setSecondsLeft] = useState(duration);
+// Utilise le temps de repos personnalisé de l'exercice s'il existe (défini
+// dans sa fiche, un palier par série — le dernier palier se répète pour les
+// séries suivantes). Sinon, retombe sur la formule par défaut 60/90/120s.
+function getRestDuration(ex, serie) {
+  if (ex && Array.isArray(ex.tempsRepos) && ex.tempsRepos.length > 0) {
+    const idx = serie - 1;
+    if (idx < ex.tempsRepos.length) return ex.tempsRepos[idx];
+    return ex.tempsRepos[ex.tempsRepos.length - 1];
+  }
+  return restDurationForSet(serie);
+}
+
+function RestTimer({ duration: initialDuration }) {
+  const [duration, setDuration] = useState(initialDuration);
+  const [secondsLeft, setSecondsLeft] = useState(initialDuration);
   const [running, setRunning] = useState(false);
   const beepedRef = useRef(false);
 
   useEffect(() => {
-    setSecondsLeft(duration);
-    setRunning(false);
-    beepedRef.current = false;
+    if (!running) {
+      setSecondsLeft(duration);
+      beepedRef.current = false;
+    }
   }, [duration]);
 
   useEffect(() => {
@@ -2529,9 +2543,24 @@ function RestTimer({ duration }) {
   };
 
   const finished = secondsLeft <= 0;
+  const notStarted = !running && secondsLeft === duration;
 
   return (
     <div style={styles.timerPanel}>
+      {notStarted && (
+        <>
+          <input
+            type="number"
+            min={5}
+            max={600}
+            value={duration}
+            onFocus={(e) => e.target.select()}
+            onChange={(e) => setDuration(Math.max(5, Number(e.target.value) || initialDuration))}
+            style={{ ...styles.numInput, width: 56 }}
+          />
+          <span style={styles.unitLabel}>sec</span>
+        </>
+      )}
       <span style={{ ...styles.timerDisplay, color: finished ? COLORS.accent : COLORS.text }}>
         {formatTimer(secondsLeft)}
       </span>
@@ -3024,6 +3053,44 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
     setAddingAnchorExId(null);
   };
 
+  // Retire complètement un exercice (et toutes ses séries) de la séance.
+  const removeExerciseFromSession = (exId) => {
+    if (!window.confirm("Retirer cet exercice (et toutes ses séries) de la séance ?")) return;
+    setLocal((prev) => prev.filter((e) => e.exerciceId !== exId));
+    setDirty(true);
+    setNiveauxParExercice((p) => {
+      const next = { ...p };
+      delete next[exId];
+      return next;
+    });
+    setNiveauxDirty(true);
+  };
+
+  // Change l'ordre d'affichage de deux exercices voisins au sein de la même
+  // zone, en réordonnant les entries correspondantes dans le tableau local.
+  const moveExerciseInZone = (exId, direction, zoneIds) => {
+    const idx = zoneIds.indexOf(exId);
+    const newIdx = idx + direction;
+    if (newIdx < 0 || newIdx >= zoneIds.length) return;
+    const neighborId = zoneIds[newIdx];
+    const grouped = groupBySeries(local);
+    const globalOrder = Object.keys(grouped);
+    const gi = globalOrder.indexOf(exId);
+    const gj = globalOrder.indexOf(neighborId);
+    if (gi === -1 || gj === -1) return;
+    const newGlobalOrder = [...globalOrder];
+    [newGlobalOrder[gi], newGlobalOrder[gj]] = [newGlobalOrder[gj], newGlobalOrder[gi]];
+    const rebuilt = [];
+    newGlobalOrder.forEach((id) => {
+      grouped[id].forEach((entry) => {
+        const { _idx, ...rest } = entry;
+        rebuilt.push(rest);
+      });
+    });
+    setLocal(rebuilt);
+    setDirty(true);
+  };
+
   useEffect(() => {
     setNiveauxParExercice(session.niveaux || {});
     setNiveauxDirty(false);
@@ -3260,6 +3327,78 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                         >
                           +
                         </button>
+                      )}
+                      {isCoach && (
+                        <button
+                          type="button"
+                          onClick={() => removeExerciseFromSession(exId)}
+                          title="Retirer cet exercice de la séance"
+                          aria-label="Retirer cet exercice de la séance"
+                          style={{
+                            width: 20,
+                            height: 20,
+                            borderRadius: 6,
+                            border: `1px solid ${COLORS.cardBorder}`,
+                            background: COLORS.bg2,
+                            color: COLORS.danger,
+                            fontSize: 13,
+                            fontWeight: 700,
+                            cursor: "pointer",
+                            flexShrink: 0,
+                            padding: 0,
+                            lineHeight: 1,
+                          }}
+                        >
+                          −
+                        </button>
+                      )}
+                      {isCoach && (
+                        <span style={{ display: "flex", gap: 2, marginLeft: 4 }}>
+                          <button
+                            type="button"
+                            onClick={() => moveExerciseInZone(exId, -1, ids)}
+                            disabled={ids.indexOf(exId) === 0}
+                            title="Monter"
+                            aria-label="Monter"
+                            style={{
+                              width: 20,
+                              height: 20,
+                              borderRadius: 6,
+                              border: `1px solid ${COLORS.cardBorder}`,
+                              background: COLORS.bg2,
+                              color: ids.indexOf(exId) === 0 ? COLORS.cardBorder : COLORS.textFaint,
+                              fontSize: 11,
+                              cursor: ids.indexOf(exId) === 0 ? "default" : "pointer",
+                              flexShrink: 0,
+                              padding: 0,
+                              lineHeight: 1,
+                            }}
+                          >
+                            ↑
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => moveExerciseInZone(exId, 1, ids)}
+                            disabled={ids.indexOf(exId) === ids.length - 1}
+                            title="Descendre"
+                            aria-label="Descendre"
+                            style={{
+                              width: 20,
+                              height: 20,
+                              borderRadius: 6,
+                              border: `1px solid ${COLORS.cardBorder}`,
+                              background: COLORS.bg2,
+                              color: ids.indexOf(exId) === ids.length - 1 ? COLORS.cardBorder : COLORS.textFaint,
+                              fontSize: 11,
+                              cursor: ids.indexOf(exId) === ids.length - 1 ? "default" : "pointer",
+                              flexShrink: 0,
+                              padding: 0,
+                              lineHeight: 1,
+                            }}
+                          >
+                            ↓
+                          </button>
+                        </span>
                       )}
                     </div>
                     {isCoach && swappingExId === exId && (
@@ -3575,7 +3714,7 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                           </button>
                         )}
                       </div>
-                      {openTimer[timerKey] && (gainage ? <GainageTimer defaultDuration={60} /> : <RestTimer duration={restDurationForSet(row.serie)} />)}
+                      {openTimer[timerKey] && (gainage ? <GainageTimer defaultDuration={60} /> : <RestTimer duration={getRestDuration(ex, row.serie)} />)}
                       </React.Fragment>
                       );
                     })}
@@ -6326,6 +6465,9 @@ function ExercisesView({ data, persistLibrary, role }) {
   const [editingExerciseId, setEditingExerciseId] = useState(null);
   const [openConsignes, setOpenConsignes] = useState({});
   const [openVideo, setOpenVideo] = useState({});
+  const [bulkMode, setBulkMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [bulkTempsRepos, setBulkTempsRepos] = useState([60]);
   const isCoach = role === "coach";
 
   const addExercise = (ex) => {
@@ -6343,22 +6485,82 @@ function ExercisesView({ data, persistLibrary, role }) {
     setEditingExerciseId(null);
   };
 
+  const toggleBulkMode = () => {
+    setBulkMode((v) => !v);
+    setSelectedIds([]);
+  };
+
+  const toggleSelected = (exId) => {
+    setSelectedIds((prev) => (prev.includes(exId) ? prev.filter((id) => id !== exId) : [...prev, exId]));
+  };
+
+  const selectAllInZone = (ids) => {
+    setSelectedIds((prev) => [...new Set([...prev, ...ids])]);
+  };
+
+  const deselectAllInZone = (ids) => {
+    setSelectedIds((prev) => prev.filter((id) => !ids.includes(id)));
+  };
+
+  const applyBulkTempsRepos = () => {
+    if (selectedIds.length === 0) return;
+    const newLib = {
+      ...data,
+      exercises: data.exercises.map((e) => (selectedIds.includes(e.id) ? { ...e, tempsRepos: bulkTempsRepos } : e)),
+    };
+    persistLibrary({ exercises: newLib.exercises, seanceTypes: newLib.seanceTypes, programs: newLib.programs, ctTypes: newLib.ctTypes, ctPrograms: newLib.ctPrograms, alimentationVideos: newLib.alimentationVideos, ctLevelNames: newLib.ctLevelNames });
+    setBulkMode(false);
+    setSelectedIds([]);
+  };
+
   return (
     <div>
       <div style={styles.rowBetween}>
         <h2 style={styles.h2}>Catalogue d'exercices</h2>
-        {isCoach && (
-          <button style={styles.primaryBtn} onClick={() => setShowNewExercise(true)}>+ Nouvel exercice</button>
-        )}
+        <div style={{ display: "flex", gap: 8 }}>
+          {isCoach && (
+            <button style={bulkMode ? { ...styles.secondaryBtn, background: COLORS.accent, color: COLORS.bg, borderColor: COLORS.accent } : styles.secondaryBtn} onClick={toggleBulkMode}>
+              {bulkMode ? "Annuler la sélection" : "Sélection multiple"}
+            </button>
+          )}
+          {isCoach && !bulkMode && (
+            <button style={styles.primaryBtn} onClick={() => setShowNewExercise(true)}>+ Nouvel exercice</button>
+          )}
+        </div>
       </div>
+
+      {isCoach && bulkMode && (
+        <div style={{ ...styles.card, marginBottom: 14, borderColor: COLORS.accent }}>
+          <div style={{ fontSize: 13, color: COLORS.text, fontWeight: 600, marginBottom: 10 }}>
+            {selectedIds.length} exercice{selectedIds.length > 1 ? "s" : ""} sélectionné{selectedIds.length > 1 ? "s" : ""}
+          </div>
+          <label style={styles.fieldLabel}>Temps de repos à appliquer à la sélection</label>
+          <RestTimesFields tempsRepos={bulkTempsRepos} onChange={setBulkTempsRepos} />
+          <button
+            style={{ ...styles.primaryBtn, marginTop: 8 }}
+            disabled={selectedIds.length === 0 || bulkTempsRepos.length === 0}
+            onClick={applyBulkTempsRepos}
+          >
+            Appliquer à la sélection
+          </button>
+        </div>
+      )}
+
       {isCoach && showNewExercise && (
         <NewExerciseForm data={data} onCancel={() => setShowNewExercise(false)} onSave={addExercise} />
       )}
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         {groupExIdsByZoneMulti(data.exercises.map((e) => e.id), exMap(data)).map(([label, ids]) => (
           <div key={label} style={styles.card}>
-            <div style={{ fontSize: 11, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>
-              {label}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+              <div style={{ fontSize: 11, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                {label}
+              </div>
+              {isCoach && bulkMode && (
+                <button style={styles.linkBtn} onClick={() => (ids.every((id) => selectedIds.includes(id)) ? deselectAllInZone(ids) : selectAllInZone(ids))}>
+                  {ids.every((id) => selectedIds.includes(id)) ? "Tout désélectionner" : "Tout sélectionner"}
+                </button>
+              )}
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {ids.map((exId) => {
@@ -6380,11 +6582,20 @@ function ExercisesView({ data, persistLibrary, role }) {
                 return (
                   <div key={ex.id} style={{ padding: "8px 12px", background: COLORS.bg2, borderRadius: 8 }}>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-                      <div>
-                        <div style={{ fontSize: 13, fontWeight: 600, color: COLORS.text }}>{ex.nom.replace(/\n/g, " ")}</div>
-                        <div style={{ fontSize: 11, color: COLORS.textFaint }}>{ex.groupe}</div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        {isCoach && bulkMode && (
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.includes(ex.id)}
+                            onChange={() => toggleSelected(ex.id)}
+                          />
+                        )}
+                        <div>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: COLORS.text }}>{ex.nom.replace(/\n/g, " ")}</div>
+                          <div style={{ fontSize: 11, color: COLORS.textFaint }}>{ex.groupe}</div>
+                        </div>
                       </div>
-                      {isCoach && (
+                      {isCoach && !bulkMode && (
                         <button style={styles.linkBtn} onClick={() => setEditingExerciseId(ex.id)}>Modifier</button>
                       )}
                     </div>
@@ -7239,6 +7450,68 @@ function LevelPickerButtons({ exercise, selected, onSelect, fallbackNames }) {
   );
 }
 
+function RestTimesFields({ tempsRepos, onChange }) {
+  const values = tempsRepos || [];
+  const updateAt = (i, v) => {
+    const next = [...values];
+    next[i] = v;
+    onChange(next);
+  };
+  const removeAt = (i) => onChange(values.filter((_, idx) => idx !== i));
+  const addTemps = () => onChange([...values, values.length ? values[values.length - 1] : 60]);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 6 }}>
+      {values.map((v, i) => (
+        <div key={i} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 12, color: COLORS.textFaint, width: 60 }}>Série {i + 1}</span>
+          <input
+            type="number"
+            min={5}
+            max={600}
+            value={v}
+            onFocus={(e) => e.target.select()}
+            onChange={(e) => updateAt(i, Math.max(5, Number(e.target.value) || 60))}
+            style={{ ...styles.numInput, width: 64 }}
+          />
+          <span style={styles.unitLabel}>sec</span>
+          <button
+            type="button"
+            onClick={() => removeAt(i)}
+            title="Retirer ce palier"
+            aria-label="Retirer ce palier"
+            style={{
+              width: 26,
+              height: 26,
+              borderRadius: 6,
+              border: `1px solid ${COLORS.cardBorder}`,
+              background: COLORS.bg2,
+              color: COLORS.textFaint,
+              fontSize: 12,
+              cursor: "pointer",
+              flexShrink: 0,
+            }}
+          >
+            ✕
+          </button>
+        </div>
+      ))}
+      {values.length === 0 ? (
+        <div style={{ fontSize: 12, color: COLORS.textFaint }}>
+          Aucun temps personnalisé — la valeur par défaut (60s / 90s / 120s selon la série) sera utilisée.
+        </div>
+      ) : (
+        <div style={{ fontSize: 11, color: COLORS.textFaint }}>
+          Au-delà du dernier palier renseigné, cette dernière valeur se répète pour les séries suivantes.
+        </div>
+      )}
+      <button type="button" style={{ ...styles.secondaryBtn, alignSelf: "flex-start" }} onClick={addTemps}>
+        + Ajouter un palier
+      </button>
+    </div>
+  );
+}
+
 function ExerciseLevelsWithDetailsFields({ niveaux, onChange }) {
   const values = niveaux || [];
   const [expandedIdx, setExpandedIdx] = useState(null);
@@ -7398,6 +7671,7 @@ function NewExerciseForm({ data, onCancel, onSave }) {
   const [consignes, setConsignes] = useState({});
   const [videoUrl, setVideoUrl] = useState("");
   const [maison, setMaison] = useState(false);
+  const [tempsRepos, setTempsRepos] = useState([]);
   const [niveaux, setNiveaux] = useState([
     { nom: "Bilatéral", consignes: {}, videoUrl: "" },
     { nom: "Unilatéral", consignes: {}, videoUrl: "" },
@@ -7458,6 +7732,9 @@ function NewExerciseForm({ data, onCancel, onSave }) {
         <span style={{ marginLeft: 8 }}>Faisable à la maison (sans machine de musculation)</span>
       </label>
 
+      <label style={styles.fieldLabel}>Temps de repos par série (optionnel)</label>
+      <RestTimesFields tempsRepos={tempsRepos} onChange={setTempsRepos} />
+
       <label style={styles.fieldLabel}>Niveaux de cet exercice (optionnel, pour le tableau CT)</label>
       <ExerciseLevelsWithDetailsFields niveaux={niveaux} onChange={setNiveaux} />
 
@@ -7490,6 +7767,7 @@ function NewExerciseForm({ data, onCancel, onSave }) {
               consignes,
               videoUrl: videoUrl.trim(),
               maison,
+              tempsRepos,
             })
           }
         >
@@ -7505,6 +7783,7 @@ function EditExerciseForm({ data, exercise, onCancel, onSave }) {
   const [consignes, setConsignes] = useState(exercise.consignes || {});
   const [videoUrl, setVideoUrl] = useState(exercise.videoUrl || "");
   const [maison, setMaison] = useState(!!exercise.maison);
+  const [tempsRepos, setTempsRepos] = useState(Array.isArray(exercise.tempsRepos) ? exercise.tempsRepos : []);
   const [niveaux, setNiveaux] = useState(
     Array.isArray(exercise.niveaux) && exercise.niveaux.length
       ? exercise.niveaux.map((n) => (typeof n === "string" ? { nom: n, consignes: {}, videoUrl: "" } : n))
@@ -7570,6 +7849,9 @@ function EditExerciseForm({ data, exercise, onCancel, onSave }) {
         <span style={{ marginLeft: 8 }}>Faisable à la maison (sans machine de musculation)</span>
       </label>
 
+      <label style={styles.fieldLabel}>Temps de repos par série (optionnel)</label>
+      <RestTimesFields tempsRepos={tempsRepos} onChange={setTempsRepos} />
+
       <label style={styles.fieldLabel}>Niveaux de cet exercice (optionnel, pour le tableau CT)</label>
       <ExerciseLevelsWithDetailsFields niveaux={niveaux} onChange={setNiveaux} />
 
@@ -7602,6 +7884,7 @@ function EditExerciseForm({ data, exercise, onCancel, onSave }) {
               consignes,
               videoUrl: videoUrl.trim(),
               maison,
+              tempsRepos,
             })
           }
         >
@@ -7642,6 +7925,9 @@ const styles = {
     padding: "16px 20px",
     borderBottom: `1px solid ${COLORS.cardBorder}`,
     background: COLORS.bg2,
+    position: "sticky",
+    top: 0,
+    zIndex: 20,
   },
   headerTop: {
     display: "flex",
