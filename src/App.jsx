@@ -1692,15 +1692,127 @@ function AutoGrowTextarea({ value, onChange, style }) {
   );
 }
 
+// Contenu éditable d'un bilan précis (gère son propre brouillon local et
+// son propre statut "modifié", indépendamment des autres bilans).
+function BilanCard({ bilan, onSave }) {
+  const [local, setLocal] = useState(bilan);
+  const [dirty, setDirty] = useState(false);
+
+  const updateField = (key, value) => {
+    setLocal((p) => ({ ...p, [key]: value }));
+    setDirty(true);
+  };
+
+  const submit = () => {
+    onSave(local);
+    setDirty(false);
+  };
+
+  return (
+    <div style={styles.card}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12, marginBottom: 16 }}>
+        {PROFILE_FIELDS.filter((f) => !f.compact && (f.key === "passeSportif" || f.key === "presentSportif")).map((f) => (
+          <div key={f.key}>
+            <label style={{ ...styles.fieldLabel, textAlign: "center", display: "block" }}>{f.label}</label>
+            <AutoGrowTextarea
+              value={local[f.key] || ""}
+              onChange={(e) => updateField(f.key, e.target.value)}
+              style={{ ...styles.textArea, textAlign: "center" }}
+            />
+          </div>
+        ))}
+      </div>
+
+      {PROFILE_FIELD_GROUPS.filter((g) => g.id === "objectifs").map((group) => (
+        <div key={group.title} style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 11, color: COLORS.accent, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8, textAlign: "center" }}>
+            {group.title}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
+            {group.subFields.map((sf) => (
+              <div key={sf.key}>
+                <label style={{ ...styles.fieldLabel, textAlign: "center", display: "block", color: COLORS.accent }}>{sf.label}</label>
+                <AutoGrowTextarea
+                  value={local[sf.key] || ""}
+                  onChange={(e) => updateField(sf.key, e.target.value)}
+                  style={{ ...styles.textArea, textAlign: "center", fontWeight: 700, color: COLORS.accent }}
+                />
+                {sf.palier && (
+                  <div style={{ textAlign: "center", fontSize: 11, color: COLORS.textFaint, marginTop: 4 }}>
+                    {sf.palier}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12, marginBottom: 16 }}>
+        {PROFILE_FIELDS.filter((f) => !f.compact && (f.key === "sante" || f.key === "exercicesAEviter")).map((f) => (
+          <div key={f.key}>
+            <label style={{ ...styles.fieldLabel, textAlign: "center", display: "block" }}>{f.label}</label>
+            <AutoGrowTextarea
+              value={local[f.key] || ""}
+              onChange={(e) => updateField(f.key, e.target.value)}
+              style={{ ...styles.textArea, textAlign: "center" }}
+            />
+          </div>
+        ))}
+      </div>
+
+      {PROFILE_FIELD_GROUPS.filter((g) => g.id !== "objectifs").map((group) => (
+        <div key={group.title} style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 11, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8, textAlign: "center" }}>
+            {group.title}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
+            {group.subFields.map((sf) => (
+              <div key={sf.key}>
+                <label style={{ ...styles.fieldLabel, textAlign: "center", display: "block" }}>{sf.label}</label>
+                <AutoGrowTextarea
+                  value={local[sf.key] || ""}
+                  onChange={(e) => updateField(sf.key, e.target.value)}
+                  style={{ ...styles.textArea, textAlign: "center" }}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12, marginBottom: 16 }}>
+        {PROFILE_FIELDS.filter((f) => f.compact).map((f) => (
+          <div key={f.key}>
+            <label style={{ ...styles.fieldLabel, textAlign: "center", display: "block" }}>{f.label}</label>
+            <AutoGrowTextarea
+              value={local[f.key] || ""}
+              onChange={(e) => updateField(f.key, e.target.value)}
+              style={{ ...styles.textArea, textAlign: "center" }}
+            />
+          </div>
+        ))}
+      </div>
+
+      <div style={{ textAlign: "right" }}>
+        <button
+          style={{ ...styles.primaryBtn, opacity: dirty ? 1 : 0.5 }}
+          disabled={!dirty}
+          onClick={submit}
+        >
+          Enregistrer
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function ProfileView({ profile, profileLoaded, persistProfile, activeClient, role, presentielCount, distancielCount, bookings, assignAccompagnementPresentiel, setAccompagnementOffsetPresentiel, assignAccompagnementDistanciel, setAccompagnementOffsetDistanciel, assignTypeSeance, addManualBooking, deleteManualBooking, validateDistancielSession, onChangePin, assignPalier, onGoToSuivi }) {
   const [bilans, setBilans] = useState([]);
-  const [activeBilanId, setActiveBilanId] = useState(null);
-  const [showBilanPanel, setShowBilanPanel] = useState(false);
+  const [expandedBilanIds, setExpandedBilanIds] = useState([]);
   const [showNewBilanForm, setShowNewBilanForm] = useState(false);
   const [newBilanNom, setNewBilanNom] = useState("");
   const [newBilanDate, setNewBilanDate] = useState(todayISO());
-  const [local, setLocal] = useState({});
-  const [dirty, setDirty] = useState(false);
   const [editingOffsetPresentiel, setEditingOffsetPresentiel] = useState(false);
   const [offsetInputPresentiel, setOffsetInputPresentiel] = useState("");
   const [editingTotalPresentiel, setEditingTotalPresentiel] = useState(false);
@@ -1736,29 +1848,16 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
       list = [];
     }
     setBilans(list);
-    setActiveBilanId(list.length > 0 ? list[list.length - 1].id : null);
-    setDirty(false);
   }, [profile, profileLoaded]);
 
-  // Recharge le formulaire quand on change de bilan sélectionné.
-  useEffect(() => {
-    const b = bilans.find((x) => x.id === activeBilanId);
-    setLocal(b || {});
-    setDirty(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeBilanId]);
-
-  const selectBilan = (id) => {
-    if (id === activeBilanId) return;
-    if (dirty && !window.confirm("Des modifications non enregistrées seront perdues. Continuer ?")) return;
-    setActiveBilanId(id);
+  const toggleBilanExpanded = (id) => {
+    setExpandedBilanIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   };
 
   const startNewBilan = () => {
     setNewBilanNom("");
     setNewBilanDate(todayISO());
     setShowNewBilanForm(true);
-    setShowBilanPanel(true);
   };
 
   const confirmNewBilan = () => {
@@ -1767,15 +1866,14 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
     const newBilans = [...bilans, newBilan];
     setBilans(newBilans);
     persistProfile({ bilans: newBilans });
-    setActiveBilanId(newBilan.id);
+    setExpandedBilanIds((prev) => [...prev, newBilan.id]);
     setShowNewBilanForm(false);
   };
 
-  const submitBilan = () => {
-    const newBilans = bilans.map((b) => (b.id === local.id ? local : b));
+  const saveBilan = (updatedBilan) => {
+    const newBilans = bilans.map((b) => (b.id === updatedBilan.id ? updatedBilan : b));
     setBilans(newBilans);
     persistProfile({ bilans: newBilans });
-    setDirty(false);
   };
 
   // Compatibilité : les clients créés avant la distinction présentiel/distanciel
@@ -2255,26 +2353,18 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
         );
       })()}
 
-      <button
-        type="button"
-        onClick={() => setShowBilanPanel((v) => !v)}
+      <div
         style={{
-          display: "block",
-          width: "100%",
           textAlign: "center",
           fontFamily: FONT_DISPLAY,
           fontSize: 23,
           fontWeight: 700,
           color: COLORS.accent,
-          background: "none",
-          border: "none",
-          cursor: "pointer",
-          padding: 0,
           marginBottom: 10,
         }}
       >
-        {showBilanPanel ? "▾ " : "▸ "}BILAN
-      </button>
+        BILAN
+      </div>
       <div style={{ textAlign: "center", marginBottom: 16 }}>
         <button style={styles.secondaryBtn} onClick={startNewBilan}>
           + Nouveau bilan
@@ -2306,126 +2396,38 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
         </div>
       )}
 
-      {showBilanPanel && bilans.length > 0 && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center", marginBottom: 16 }}>
+      {bilans.length === 0 ? (
+        <div style={{ ...styles.emptyState, marginBottom: 16 }}>Aucun bilan pour l'instant. Clique sur "+ Nouveau bilan" pour en créer un.</div>
+      ) : (
+        <>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center", marginBottom: 16 }}>
+            {bilans
+              .slice()
+              .sort((a, b) => (a.date < b.date ? -1 : 1))
+              .map((b) => (
+                <button
+                  key={b.id}
+                  onClick={() => toggleBilanExpanded(b.id)}
+                  style={{
+                    ...styles.secondaryBtn,
+                    ...(expandedBilanIds.includes(b.id) ? { background: COLORS.accent, color: COLORS.bg, borderColor: COLORS.accent } : {}),
+                  }}
+                >
+                  {expandedBilanIds.includes(b.id) ? "▾ " : "▸ "}{b.nom} <span style={{ opacity: 0.7, marginLeft: 4 }}>· {formatDateFR(b.date)}</span>
+                </button>
+              ))}
+          </div>
+
           {bilans
             .slice()
-            .sort((a, b) => (a.date < b.date ? 1 : -1))
+            .sort((a, b) => (a.date < b.date ? -1 : 1))
+            .filter((b) => expandedBilanIds.includes(b.id))
             .map((b) => (
-              <button
-                key={b.id}
-                onClick={() => selectBilan(b.id)}
-                style={{
-                  ...styles.secondaryBtn,
-                  ...(b.id === activeBilanId ? { background: COLORS.accent, color: COLORS.bg, borderColor: COLORS.accent } : {}),
-                }}
-              >
-                {b.nom} <span style={{ opacity: 0.7, marginLeft: 4 }}>· {formatDateFR(b.date)}</span>
-              </button>
+              <div key={b.id} style={{ marginBottom: 16 }}>
+                <BilanCard bilan={b} onSave={saveBilan} />
+              </div>
             ))}
-        </div>
-      )}
-
-      {showBilanPanel && bilans.length === 0 && (
-        <div style={{ ...styles.emptyState, marginBottom: 16 }}>Aucun bilan pour l'instant. Clique sur "+ Nouveau bilan" pour en créer un.</div>
-      )}
-
-      {showBilanPanel && activeBilanId && (
-      <div style={styles.card}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12, marginBottom: 16 }}>
-          {PROFILE_FIELDS.filter((f) => !f.compact && (f.key === "passeSportif" || f.key === "presentSportif")).map((f) => (
-            <div key={f.key}>
-              <label style={{ ...styles.fieldLabel, textAlign: "center", display: "block" }}>{f.label}</label>
-              <AutoGrowTextarea
-                value={local[f.key] || ""}
-                onChange={(e) => updateField(f.key, e.target.value)}
-                style={{ ...styles.textArea, textAlign: "center" }}
-              />
-            </div>
-          ))}
-        </div>
-
-        {PROFILE_FIELD_GROUPS.filter((g) => g.id === "objectifs").map((group) => (
-          <div key={group.title} style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: 11, color: COLORS.accent, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8, textAlign: "center" }}>
-              {group.title}
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
-              {group.subFields.map((sf) => (
-                <div key={sf.key}>
-                  <label style={{ ...styles.fieldLabel, textAlign: "center", display: "block", color: COLORS.accent }}>{sf.label}</label>
-                  <AutoGrowTextarea
-                    value={local[sf.key] || ""}
-                    onChange={(e) => updateField(sf.key, e.target.value)}
-                    style={{ ...styles.textArea, textAlign: "center", fontWeight: 700, color: COLORS.accent }}
-                  />
-                  {sf.palier && (
-                    <div style={{ textAlign: "center", fontSize: 11, color: COLORS.textFaint, marginTop: 4 }}>
-                      {sf.palier}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        ))}
-
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12, marginBottom: 16 }}>
-          {PROFILE_FIELDS.filter((f) => !f.compact && (f.key === "sante" || f.key === "exercicesAEviter")).map((f) => (
-            <div key={f.key}>
-              <label style={{ ...styles.fieldLabel, textAlign: "center", display: "block" }}>{f.label}</label>
-              <AutoGrowTextarea
-                value={local[f.key] || ""}
-                onChange={(e) => updateField(f.key, e.target.value)}
-                style={{ ...styles.textArea, textAlign: "center" }}
-              />
-            </div>
-          ))}
-        </div>
-
-        {PROFILE_FIELD_GROUPS.filter((g) => g.id !== "objectifs").map((group) => (
-          <div key={group.title} style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: 11, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8, textAlign: "center" }}>
-              {group.title}
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
-              {group.subFields.map((sf) => (
-                <div key={sf.key}>
-                  <label style={{ ...styles.fieldLabel, textAlign: "center", display: "block" }}>{sf.label}</label>
-                  <AutoGrowTextarea
-                    value={local[sf.key] || ""}
-                    onChange={(e) => updateField(sf.key, e.target.value)}
-                    style={{ ...styles.textArea, textAlign: "center" }}
-                  />
-                </div>
-              ))}
-            </div>
-          </div>
-        ))}
-
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12, marginBottom: 16 }}>
-          {PROFILE_FIELDS.filter((f) => f.compact).map((f) => (
-            <div key={f.key}>
-              <label style={{ ...styles.fieldLabel, textAlign: "center", display: "block" }}>{f.label}</label>
-              <AutoGrowTextarea
-                value={local[f.key] || ""}
-                onChange={(e) => updateField(f.key, e.target.value)}
-                style={{ ...styles.textArea, textAlign: "center" }}
-              />
-            </div>
-          ))}
-        </div>
-
-        <div style={{ textAlign: "right" }}>
-          <button
-            style={{ ...styles.primaryBtn, opacity: dirty ? 1 : 0.5 }}
-            disabled={!dirty}
-            onClick={submitBilan}
-          >
-            Enregistrer
-          </button>
-        </div>
-      </div>
+        </>
       )}
 
       {!isCoach && (
