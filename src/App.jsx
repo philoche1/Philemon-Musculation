@@ -1638,6 +1638,29 @@ function PalierFrise({ palierActuel }) {
   );
 }
 
+// Zone de texte qui se resserre quand elle est vide et s'agrandit
+// automatiquement au fur et à mesure du texte saisi (au lieu d'une hauteur fixe).
+function AutoGrowTextarea({ value, onChange, style }) {
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = el.scrollHeight + "px";
+  }, [value]);
+
+  return (
+    <textarea
+      ref={ref}
+      value={value}
+      onChange={onChange}
+      rows={1}
+      style={{ ...style, overflow: "hidden", resize: "none" }}
+    />
+  );
+}
+
 function ProfileView({ profile, profileLoaded, persistProfile, activeClient, role, presentielCount, distancielCount, bookings, assignAccompagnementPresentiel, setAccompagnementOffsetPresentiel, assignAccompagnementDistanciel, setAccompagnementOffsetDistanciel, assignTypeSeance, addManualBooking, deleteManualBooking, validateDistancielSession, onChangePin, assignPalier, onGoToSuivi }) {
   const [local, setLocal] = useState(profile || {});
   const [dirty, setDirty] = useState(false);
@@ -2156,10 +2179,9 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
         {PROFILE_FIELDS.filter((f) => !f.compact).map((f, i, arr) => (
           <div key={f.key} style={{ marginBottom: 16 }}>
             <label style={styles.fieldLabel}>{f.label}</label>
-            <textarea
+            <AutoGrowTextarea
               value={local[f.key] || ""}
               onChange={(e) => updateField(f.key, e.target.value)}
-              rows={f.key === "objectifs" || f.key === "presentSportif" || f.key === "passeSportif" || f.key === "exercicesAEviter" ? 3 : 2}
               style={styles.textArea}
             />
           </div>
