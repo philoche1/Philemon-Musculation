@@ -7924,7 +7924,6 @@ const styles = {
     color: COLORS.text,
     minHeight: "100%",
     borderRadius: 12,
-    overflow: "hidden",
   },
   loadingScreen: {
     display: "flex",
