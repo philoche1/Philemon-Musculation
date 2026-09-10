@@ -4888,7 +4888,11 @@ function DocumentsView({ clientId, role, activeClient }) {
     const newTab = window.open("", "_blank");
     try {
       const res = await fetch(doc.dataUrl);
-      const blob = await res.blob();
+      const arrayBuffer = await res.arrayBuffer();
+      // On force explicitement le type MIME du blob (plutôt que de laisser
+      // le navigateur le déduire) : certains PDF ouvrent sinon en
+      // téléchargement au lieu de s'afficher.
+      const blob = new Blob([arrayBuffer], { type: doc.mimeType || "application/octet-stream" });
       const blobUrl = URL.createObjectURL(blob);
       if (newTab) newTab.location.href = blobUrl;
       setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
