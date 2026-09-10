@@ -36,11 +36,8 @@ const PALIERS_ACCOMPAGNEMENT = [
 const PROFILE_FIELDS = [
   { key: "passeSportif", label: "Passé sportif, activité" },
   { key: "presentSportif", label: "Présent sportif, activité" },
-  { key: "objectifs", label: "Objectifs court, moyen, long terme" },
   { key: "sante", label: "Santé" },
   { key: "exercicesAEviter", label: "Exercices à éviter" },
-  { key: "alimentation", label: "Alimentation" },
-  { key: "boisson", label: "Boisson" },
   { key: "fume", label: "Fume", compact: true },
   { key: "tempsEcran", label: "Temps d'écran", compact: true },
   { key: "sommeil", label: "Sommeil", compact: true },
@@ -48,6 +45,36 @@ const PROFILE_FIELDS = [
   { key: "frequenceEntrainement", label: "Entraînement / semaine", compact: true },
   { key: "brasFaible", label: "Bras faible", compact: true },
   { key: "jambeFaible", label: "Jambe faible", compact: true },
+];
+
+// Champs regroupés en plusieurs compartiments sous un même titre.
+const PROFILE_FIELD_GROUPS = [
+  {
+    title: "Objectifs",
+    subFields: [
+      { key: "objectifsCourtTerme", label: "Court terme" },
+      { key: "objectifsMoyenTerme", label: "Moyen terme" },
+      { key: "objectifsLongTerme", label: "Long terme" },
+    ],
+  },
+  {
+    title: "Alimentation",
+    subFields: [
+      { key: "alimentationMatin", label: "Matin" },
+      { key: "alimentationMidi", label: "Midi" },
+      { key: "alimentationGouter", label: "Goûter" },
+      { key: "alimentationSoir", label: "Soir" },
+    ],
+  },
+  {
+    title: "Boisson",
+    subFields: [
+      { key: "boissonMatin", label: "Matin" },
+      { key: "boissonMidi", label: "Midi" },
+      { key: "boissonGouter", label: "Goûter" },
+      { key: "boissonSoir", label: "Soir" },
+    ],
+  },
 ];
 
 const DEFAULT_SERIES_COUNT = 4;
@@ -2186,15 +2213,35 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
             />
           </div>
         ))}
+
+        {PROFILE_FIELD_GROUPS.map((group) => (
+          <div key={group.title} style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 11, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>
+              {group.title}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: `repeat(${group.subFields.length}, minmax(140px, 1fr))`, gap: 12 }}>
+              {group.subFields.map((sf) => (
+                <div key={sf.key}>
+                  <label style={styles.fieldLabel}>{sf.label}</label>
+                  <AutoGrowTextarea
+                    value={local[sf.key] || ""}
+                    onChange={(e) => updateField(sf.key, e.target.value)}
+                    style={styles.textArea}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
           {PROFILE_FIELDS.filter((f) => f.compact).map((f) => (
             <div key={f.key}>
               <label style={styles.fieldLabel}>{f.label}</label>
-              <input
-                type="text"
+              <AutoGrowTextarea
                 value={local[f.key] || ""}
                 onChange={(e) => updateField(f.key, e.target.value)}
-                style={{ ...styles.textInput, marginBottom: 0 }}
+                style={styles.textArea}
               />
             </div>
           ))}
