@@ -2990,6 +2990,7 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
   const [openNiveauConsignes, setOpenNiveauConsignes] = useState({});
   const [openNiveauVideo, setOpenNiveauVideo] = useState({});
   const [swappingExId, setSwappingExId] = useState(null);
+  const [addingAnchorExId, setAddingAnchorExId] = useState(null);
   const isCoach = role === "coach";
 
   const swapExercise = (oldExId, newExId) => {
@@ -3010,6 +3011,17 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
     });
     setNiveauxDirty(true);
     setSwappingExId(null);
+  };
+
+  // Ajoute un nouvel exercice (de la même zone) à la séance, avec ses séries
+  // pré-remplies comme la dernière fois que cette séance a été faite.
+  const addExerciseToSession = (newExId) => {
+    const baseEntries = makeEntries([newExId], exercises);
+    const previousMap = getPreviousEntriesSameSeance(allSessions, session.seanceNom, session.id);
+    const newEntries = applyPreviousEntries(baseEntries, previousMap);
+    setLocal((prev) => [...prev, ...newEntries]);
+    setDirty(true);
+    setAddingAnchorExId(null);
   };
 
   useEffect(() => {
@@ -3210,7 +3222,7 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                 const showTimerBtn = ex && getExerciseZones(ex).some((z) => zoneLabel(z) === "BAS DU CORPS" || zoneLabel(z) === "HAUT DU CORPS");
                 return (
                   <div key={exId} style={{ marginBottom: 14 }}>
-                    <div style={{ fontSize: 13, color: COLORS.accent2, marginBottom: 6, fontFamily: FONT_BODY, fontWeight: 600 }}>
+                    <div style={{ fontSize: 13, color: COLORS.accent2, marginBottom: 6, fontFamily: FONT_BODY, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
                       {isCoach ? (
                         <button
                           type="button"
@@ -3225,6 +3237,30 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                       )}
                       {warmup && <span style={{ color: COLORS.textFaint, fontWeight: 400, fontSize: 11 }}> — temps en secondes</span>}
                       {gainage && <span style={{ color: COLORS.textFaint, fontWeight: 400, fontSize: 11 }}> — temps d'effort en secondes</span>}
+                      {isCoach && (
+                        <button
+                          type="button"
+                          onClick={() => setAddingAnchorExId(addingAnchorExId === exId ? null : exId)}
+                          title="Ajouter un exercice dans cette zone"
+                          aria-label="Ajouter un exercice dans cette zone"
+                          style={{
+                            width: 20,
+                            height: 20,
+                            borderRadius: 6,
+                            border: `1px solid ${COLORS.cardBorder}`,
+                            background: addingAnchorExId === exId ? COLORS.accent : COLORS.bg2,
+                            color: addingAnchorExId === exId ? COLORS.bg : COLORS.textFaint,
+                            fontSize: 13,
+                            fontWeight: 700,
+                            cursor: "pointer",
+                            flexShrink: 0,
+                            padding: 0,
+                            lineHeight: 1,
+                          }}
+                        >
+                          +
+                        </button>
+                      )}
                     </div>
                     {isCoach && swappingExId === exId && (
                       <div style={{ ...styles.consignesPanel, marginBottom: 10 }}>
@@ -3251,6 +3287,35 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                         <button type="button" style={{ ...styles.linkBtn, marginTop: 8 }} onClick={() => setSwappingExId(null)}>Annuler</button>
                       </div>
                     )}
+                    {isCoach && addingAnchorExId === exId && (() => {
+                      const idsDejaPresents = new Set(local.map((e) => e.exerciceId));
+                      const candidats = Object.values(exercises).filter(
+                        (cand) => !idsDejaPresents.has(cand.id) && getExerciseZones(cand).some((z) => zoneLabel(z) === label)
+                      );
+                      return (
+                        <div style={{ ...styles.consignesPanel, marginBottom: 10 }}>
+                          <div style={{ fontSize: 11, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>
+                            Ajouter un exercice de la zone "{label}"
+                          </div>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 220, overflowY: "auto" }}>
+                            {candidats.map((cand) => (
+                              <button
+                                key={cand.id}
+                                type="button"
+                                onClick={() => addExerciseToSession(cand.id)}
+                                style={{ ...styles.secondaryBtn, textAlign: "left", padding: "6px 10px" }}
+                              >
+                                {exDisplayName(cand)}
+                              </button>
+                            ))}
+                            {candidats.length === 0 && (
+                              <div style={{ fontSize: 12, color: COLORS.textFaint }}>Tous les exercices de cette zone sont déjà dans la séance.</div>
+                            )}
+                          </div>
+                          <button type="button" style={{ ...styles.linkBtn, marginTop: 8 }} onClick={() => setAddingAnchorExId(null)}>Annuler</button>
+                        </div>
+                      );
+                    })()}
                     {ex && (() => {
                       const exNiveaux = getExerciseNiveaux(ex, null);
                       const selectedNiveau = exNiveaux[(niveauxParExercice[exId] || 1) - 1];
@@ -4704,8 +4769,10 @@ function DocumentsView({ clientId, role, activeClient }) {
             <div key={doc.id} style={{ ...styles.card, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
               <a
                 href={doc.dataUrl}
-                download={doc.name}
+                target="_blank"
+                rel="noopener noreferrer"
                 style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none", flex: 1, minWidth: 0 }}
+                title="Aperçu"
               >
                 <span style={{ fontSize: 22, flexShrink: 0 }}>
                   {doc.mimeType && doc.mimeType.includes("pdf") ? "📄" : doc.mimeType && doc.mimeType.startsWith("image/") ? "🖼️" : "📎"}
@@ -4719,36 +4786,47 @@ function DocumentsView({ clientId, role, activeClient }) {
                   </span>
                 </span>
               </a>
-              {isCoach && (
-                <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
-                  <button
-                    style={{ ...styles.secondaryBtn, padding: "4px 8px" }}
-                    onClick={() => moveDocument(i, -1)}
-                    disabled={i === 0}
-                    title="Monter"
-                    aria-label="Monter"
-                  >
-                    ↑
-                  </button>
-                  <button
-                    style={{ ...styles.secondaryBtn, padding: "4px 8px" }}
-                    onClick={() => moveDocument(i, 1)}
-                    disabled={i === documents.length - 1}
-                    title="Descendre"
-                    aria-label="Descendre"
-                  >
-                    ↓
-                  </button>
-                  <button
-                    style={styles.trashBtn}
-                    onClick={() => deleteDocument(doc.id)}
-                    title="Supprimer le document"
-                    aria-label="Supprimer le document"
-                  >
-                    🗑️
-                  </button>
-                </div>
-              )}
+              <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+                <a
+                  href={doc.dataUrl}
+                  download={doc.name}
+                  style={{ ...styles.secondaryBtn, padding: "4px 8px", textDecoration: "none", display: "inline-flex", alignItems: "center" }}
+                  title="Télécharger"
+                  aria-label="Télécharger"
+                >
+                  ⬇
+                </a>
+                {isCoach && (
+                  <>
+                    <button
+                      style={{ ...styles.secondaryBtn, padding: "4px 8px" }}
+                      onClick={() => moveDocument(i, -1)}
+                      disabled={i === 0}
+                      title="Monter"
+                      aria-label="Monter"
+                    >
+                      ↑
+                    </button>
+                    <button
+                      style={{ ...styles.secondaryBtn, padding: "4px 8px" }}
+                      onClick={() => moveDocument(i, 1)}
+                      disabled={i === documents.length - 1}
+                      title="Descendre"
+                      aria-label="Descendre"
+                    >
+                      ↓
+                    </button>
+                    <button
+                      style={styles.trashBtn}
+                      onClick={() => deleteDocument(doc.id)}
+                      title="Supprimer le document"
+                      aria-label="Supprimer le document"
+                    >
+                      🗑️
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
           ))}
         </div>
