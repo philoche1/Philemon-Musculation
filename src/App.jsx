@@ -1693,7 +1693,13 @@ function AutoGrowTextarea({ value, onChange, style }) {
 }
 
 function ProfileView({ profile, profileLoaded, persistProfile, activeClient, role, presentielCount, distancielCount, bookings, assignAccompagnementPresentiel, setAccompagnementOffsetPresentiel, assignAccompagnementDistanciel, setAccompagnementOffsetDistanciel, assignTypeSeance, addManualBooking, deleteManualBooking, validateDistancielSession, onChangePin, assignPalier, onGoToSuivi }) {
-  const [local, setLocal] = useState(profile || {});
+  const [bilans, setBilans] = useState([]);
+  const [activeBilanId, setActiveBilanId] = useState(null);
+  const [showBilanPanel, setShowBilanPanel] = useState(false);
+  const [showNewBilanForm, setShowNewBilanForm] = useState(false);
+  const [newBilanNom, setNewBilanNom] = useState("");
+  const [newBilanDate, setNewBilanDate] = useState(todayISO());
+  const [local, setLocal] = useState({});
   const [dirty, setDirty] = useState(false);
   const [editingOffsetPresentiel, setEditingOffsetPresentiel] = useState(false);
   const [offsetInputPresentiel, setOffsetInputPresentiel] = useState("");
@@ -1715,6 +1721,62 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
   const [pinSuccess, setPinSuccess] = useState(false);
   const [pinLoading, setPinLoading] = useState(false);
   const isCoach = role === "coach";
+
+  // Charge les bilans depuis le profil stocké. Compatibilité : les profils
+  // créés avant l'historique des bilans n'avaient qu'un seul objet plat —
+  // on le convertit en un premier bilan "Bilan initial".
+  useEffect(() => {
+    if (!profileLoaded) return;
+    let list;
+    if (profile && Array.isArray(profile.bilans)) {
+      list = profile.bilans;
+    } else if (profile && Object.keys(profile).length > 0) {
+      list = [{ id: uid("bilan"), nom: "Bilan initial", date: todayISO(), ...profile }];
+    } else {
+      list = [];
+    }
+    setBilans(list);
+    setActiveBilanId(list.length > 0 ? list[list.length - 1].id : null);
+    setDirty(false);
+  }, [profile, profileLoaded]);
+
+  // Recharge le formulaire quand on change de bilan sélectionné.
+  useEffect(() => {
+    const b = bilans.find((x) => x.id === activeBilanId);
+    setLocal(b || {});
+    setDirty(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeBilanId]);
+
+  const selectBilan = (id) => {
+    if (id === activeBilanId) return;
+    if (dirty && !window.confirm("Des modifications non enregistrées seront perdues. Continuer ?")) return;
+    setActiveBilanId(id);
+  };
+
+  const startNewBilan = () => {
+    setNewBilanNom("");
+    setNewBilanDate(todayISO());
+    setShowNewBilanForm(true);
+    setShowBilanPanel(true);
+  };
+
+  const confirmNewBilan = () => {
+    if (!newBilanNom.trim()) return;
+    const newBilan = { id: uid("bilan"), nom: newBilanNom.trim(), date: newBilanDate };
+    const newBilans = [...bilans, newBilan];
+    setBilans(newBilans);
+    persistProfile({ bilans: newBilans });
+    setActiveBilanId(newBilan.id);
+    setShowNewBilanForm(false);
+  };
+
+  const submitBilan = () => {
+    const newBilans = bilans.map((b) => (b.id === local.id ? local : b));
+    setBilans(newBilans);
+    persistProfile({ bilans: newBilans });
+    setDirty(false);
+  };
 
   // Compatibilité : les clients créés avant la distinction présentiel/distanciel
   // n'ont que les anciens champs accompagnementTotal/accompagnementOffset, traités comme présentiel.
@@ -1817,16 +1879,6 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
       {activeClient && <PalierFrise palierActuel={activeClient.palierActuel} />}
       <div style={styles.rowBetween}>
         <h2 style={styles.h2}>Profil{activeClient ? ` — ${activeClient.name}` : ""}</h2>
-        <button
-          style={{ ...styles.primaryBtn, opacity: dirty ? 1 : 0.5 }}
-          disabled={!dirty}
-          onClick={() => {
-            persistProfile(local);
-            setDirty(false);
-          }}
-        >
-          Enregistrer
-        </button>
       </div>
 
       <div style={{ ...styles.card, marginBottom: 16, borderColor: overLimitPresentiel ? COLORS.danger : COLORS.accent }}>
@@ -2203,9 +2255,82 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
         );
       })()}
 
-      <div style={{ textAlign: "center", fontFamily: FONT_DISPLAY, fontSize: 23, fontWeight: 700, color: COLORS.accent, marginBottom: 16 }}>
-        BILAN
+      <button
+        type="button"
+        onClick={() => setShowBilanPanel((v) => !v)}
+        style={{
+          display: "block",
+          width: "100%",
+          textAlign: "center",
+          fontFamily: FONT_DISPLAY,
+          fontSize: 23,
+          fontWeight: 700,
+          color: COLORS.accent,
+          background: "none",
+          border: "none",
+          cursor: "pointer",
+          padding: 0,
+          marginBottom: 10,
+        }}
+      >
+        {showBilanPanel ? "▾ " : "▸ "}BILAN
+      </button>
+      <div style={{ textAlign: "center", marginBottom: 16 }}>
+        <button style={styles.secondaryBtn} onClick={startNewBilan}>
+          + Nouveau bilan
+        </button>
       </div>
+
+      {showNewBilanForm && (
+        <div style={{ ...styles.card, marginBottom: 16, borderColor: COLORS.accent }}>
+          <div style={{ fontFamily: FONT_DISPLAY, fontSize: 15, color: COLORS.text, marginBottom: 12 }}>Nouveau bilan</div>
+          <label style={styles.fieldLabel}>Nom du bilan</label>
+          <input
+            style={styles.textInput}
+            value={newBilanNom}
+            onChange={(e) => setNewBilanNom(e.target.value)}
+            placeholder="Ex: Bilan 3 mois"
+            autoFocus
+          />
+          <label style={styles.fieldLabel}>Date</label>
+          <input
+            type="date"
+            style={styles.textInput}
+            value={newBilanDate}
+            onChange={(e) => setNewBilanDate(e.target.value)}
+          />
+          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+            <button style={styles.secondaryBtn} onClick={() => setShowNewBilanForm(false)}>Annuler</button>
+            <button style={styles.primaryBtn} disabled={!newBilanNom.trim()} onClick={confirmNewBilan}>Créer</button>
+          </div>
+        </div>
+      )}
+
+      {showBilanPanel && bilans.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center", marginBottom: 16 }}>
+          {bilans
+            .slice()
+            .sort((a, b) => (a.date < b.date ? 1 : -1))
+            .map((b) => (
+              <button
+                key={b.id}
+                onClick={() => selectBilan(b.id)}
+                style={{
+                  ...styles.secondaryBtn,
+                  ...(b.id === activeBilanId ? { background: COLORS.accent, color: COLORS.bg, borderColor: COLORS.accent } : {}),
+                }}
+              >
+                {b.nom} <span style={{ opacity: 0.7, marginLeft: 4 }}>· {formatDateFR(b.date)}</span>
+              </button>
+            ))}
+        </div>
+      )}
+
+      {showBilanPanel && bilans.length === 0 && (
+        <div style={{ ...styles.emptyState, marginBottom: 16 }}>Aucun bilan pour l'instant. Clique sur "+ Nouveau bilan" pour en créer un.</div>
+      )}
+
+      {showBilanPanel && activeBilanId && (
       <div style={styles.card}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12, marginBottom: 16 }}>
           {PROFILE_FIELDS.filter((f) => !f.compact && (f.key === "passeSportif" || f.key === "presentSportif")).map((f) => (
@@ -2278,7 +2403,7 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
           </div>
         ))}
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12, marginBottom: 16 }}>
           {PROFILE_FIELDS.filter((f) => f.compact).map((f) => (
             <div key={f.key}>
               <label style={{ ...styles.fieldLabel, textAlign: "center", display: "block" }}>{f.label}</label>
@@ -2290,7 +2415,18 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
             </div>
           ))}
         </div>
+
+        <div style={{ textAlign: "right" }}>
+          <button
+            style={{ ...styles.primaryBtn, opacity: dirty ? 1 : 0.5 }}
+            disabled={!dirty}
+            onClick={submitBilan}
+          >
+            Enregistrer
+          </button>
+        </div>
       </div>
+      )}
 
       {!isCoach && (
         <div style={{ marginTop: 24 }}>
