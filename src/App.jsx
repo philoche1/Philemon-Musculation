@@ -41,13 +41,13 @@ const PROFILE_FIELDS = [
   { key: "exercicesAEviter", label: "Exercices à éviter" },
   { key: "alimentation", label: "Alimentation" },
   { key: "boisson", label: "Boisson" },
-  { key: "fume", label: "Fume" },
-  { key: "tempsEcran", label: "Temps d'écran" },
-  { key: "sommeil", label: "Sommeil" },
-  { key: "stress", label: "Stress sur une échelle de 1 à 10" },
-  { key: "frequenceEntrainement", label: "Fréquence d'entraînement par semaine" },
-  { key: "brasFaible", label: "Bras faible" },
-  { key: "jambeFaible", label: "Jambe faible" },
+  { key: "fume", label: "Fume", compact: true },
+  { key: "tempsEcran", label: "Temps d'écran", compact: true },
+  { key: "sommeil", label: "Sommeil", compact: true },
+  { key: "stress", label: "Stress (1 à 10)", compact: true },
+  { key: "frequenceEntrainement", label: "Entraînement / semaine", compact: true },
+  { key: "brasFaible", label: "Bras faible", compact: true },
+  { key: "jambeFaible", label: "Jambe faible", compact: true },
 ];
 
 const DEFAULT_SERIES_COUNT = 4;
@@ -2153,8 +2153,8 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
         Ces informations aident le coach à personnaliser le suivi. Modifiable par le coach comme par le client.
       </p>
       <div style={styles.card}>
-        {PROFILE_FIELDS.map((f, i) => (
-          <div key={f.key} style={{ marginBottom: i === PROFILE_FIELDS.length - 1 ? 0 : 16 }}>
+        {PROFILE_FIELDS.filter((f) => !f.compact).map((f, i, arr) => (
+          <div key={f.key} style={{ marginBottom: 16 }}>
             <label style={styles.fieldLabel}>{f.label}</label>
             <textarea
               value={local[f.key] || ""}
@@ -2164,6 +2164,19 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
             />
           </div>
         ))}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
+          {PROFILE_FIELDS.filter((f) => f.compact).map((f) => (
+            <div key={f.key}>
+              <label style={styles.fieldLabel}>{f.label}</label>
+              <input
+                type="text"
+                value={local[f.key] || ""}
+                onChange={(e) => updateField(f.key, e.target.value)}
+                style={{ ...styles.textInput, marginBottom: 0 }}
+              />
+            </div>
+          ))}
+        </div>
       </div>
 
       {!isCoach && (
