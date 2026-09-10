@@ -50,14 +50,17 @@ const PROFILE_FIELDS = [
 // Champs regroupés en plusieurs compartiments sous un même titre.
 const PROFILE_FIELD_GROUPS = [
   {
+    id: "objectifs",
     title: "Objectifs",
+    highlight: true,
     subFields: [
-      { key: "objectifsCourtTerme", label: "Court terme" },
-      { key: "objectifsMoyenTerme", label: "Moyen terme" },
-      { key: "objectifsLongTerme", label: "Long terme" },
+      { key: "objectifsCourtTerme", label: "Court terme", palier: "Bronze" },
+      { key: "objectifsMoyenTerme", label: "Moyen terme", palier: "Argent" },
+      { key: "objectifsLongTerme", label: "Long terme", palier: "Or" },
     ],
   },
   {
+    id: "alimentation",
     title: "Alimentation",
     subFields: [
       { key: "alimentationMatin", label: "Matin" },
@@ -67,6 +70,7 @@ const PROFILE_FIELD_GROUPS = [
     ],
   },
   {
+    id: "boisson",
     title: "Boisson",
     subFields: [
       { key: "boissonMatin", label: "Matin" },
@@ -2203,7 +2207,7 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
         Ces informations aident le coach à personnaliser le suivi. Modifiable par le coach comme par le client.
       </p>
       <div style={styles.card}>
-        {PROFILE_FIELDS.filter((f) => !f.compact).map((f, i, arr) => (
+        {PROFILE_FIELDS.filter((f) => !f.compact && (f.key === "passeSportif" || f.key === "presentSportif")).map((f) => (
           <div key={f.key} style={{ marginBottom: 16 }}>
             <label style={styles.fieldLabel}>{f.label}</label>
             <AutoGrowTextarea
@@ -2214,7 +2218,43 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
           </div>
         ))}
 
-        {PROFILE_FIELD_GROUPS.map((group) => (
+        {PROFILE_FIELD_GROUPS.filter((g) => g.id === "objectifs").map((group) => (
+          <div key={group.title} style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 11, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>
+              {group.title}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: `repeat(${group.subFields.length}, minmax(140px, 1fr))`, gap: 12 }}>
+              {group.subFields.map((sf) => (
+                <div key={sf.key}>
+                  <label style={styles.fieldLabel}>{sf.label}</label>
+                  <AutoGrowTextarea
+                    value={local[sf.key] || ""}
+                    onChange={(e) => updateField(sf.key, e.target.value)}
+                    style={{ ...styles.textArea, textAlign: "center", fontWeight: 700, color: COLORS.accent }}
+                  />
+                  {sf.palier && (
+                    <div style={{ textAlign: "center", fontSize: 11, color: COLORS.textFaint, marginTop: 4 }}>
+                      {sf.palier}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+
+        {PROFILE_FIELDS.filter((f) => !f.compact && (f.key === "sante" || f.key === "exercicesAEviter")).map((f) => (
+          <div key={f.key} style={{ marginBottom: 16 }}>
+            <label style={styles.fieldLabel}>{f.label}</label>
+            <AutoGrowTextarea
+              value={local[f.key] || ""}
+              onChange={(e) => updateField(f.key, e.target.value)}
+              style={styles.textArea}
+            />
+          </div>
+        ))}
+
+        {PROFILE_FIELD_GROUPS.filter((g) => g.id !== "objectifs").map((group) => (
           <div key={group.title} style={{ marginBottom: 16 }}>
             <div style={{ fontSize: 11, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>
               {group.title}
