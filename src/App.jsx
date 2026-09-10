@@ -25,6 +25,7 @@ const LIENS_CALENDLY = {
   "1h": "https://calendly.com/philemon-stordeur/philemon-musculation-1h",
   "1h30": "https://calendly.com/philemon-stordeur/philemon-musculation-1h30",
 };
+const LIEN_AVIS = "https://g.page/r/CeunR46rQXyjEAE/review";
 const PALIERS_ACCOMPAGNEMENT = [
   { id: "fer", nom: "Fer", presentiel: 5, distanciel: 0 },
   { id: "bronze", nom: "Bronze", presentiel: 23, distanciel: 10 },
@@ -847,6 +848,7 @@ bookings={bookings}
             {view === "progression" && <ProgressionView data={data} />}
             {view === "ct" && <CTView data={data} activeClient={activeClient} clientId={clientId} role={roleEffectif} persistLibrary={persistLibrary} />}
             {view === "alimentation" && <AlimentationView clientId={clientId} role={roleEffectif} data={data} persistLibrary={persistLibrary} activeClient={activeClient} assignMealPlan={assignMealPlan} />}
+            {view === "documents" && <DocumentsView clientId={clientId} role={roleEffectif} activeClient={activeClient} />}
             {view === "programmes" && (
               <ProgrammesView
                 data={data}
@@ -1395,6 +1397,7 @@ function Header({ role, view, setView, clientName, onChangeClient, saving, onLog
     { id: "exercices", label: "Exercices" },
     { id: "ct", label: "CT" },
     { id: "alimentation", label: "Alimentation" },
+    { id: "documents", label: "Documents" },
   ];
   return (
     <div style={styles.header}>
@@ -2412,6 +2415,7 @@ function SuiviView({ data, persistSessions, role, activeClient, deleteProgrammeH
             allSessions={data.sessions}
             programName={programNameForSeance(session.seanceNom)}
             isDistanciel={isDistancielSeance(session.seanceNom)}
+            role={role}
             expanded={expanded === session.id}
             onToggle={() => setExpanded(expanded === session.id ? null : session.id)}
             onExpand={() => setExpanded(session.id)}
@@ -2970,7 +2974,7 @@ function groupBySeries(entries) {
 const DEFAULT_BILAN = { difficulte: null, sensation: null, douleur: "", remarque: "" };
 const DEFAULT_BILAN_AVANT = { forme: null, sommeil: null, alimentation: null, douleur: "", remarque: "" };
 
-function SessionCard({ session, exercises, allSessions, programName, isDistanciel, expanded, onToggle, onExpand, onSave, onDelete }) {
+function SessionCard({ session, exercises, allSessions, programName, isDistanciel, role, expanded, onToggle, onExpand, onSave, onDelete }) {
   const [local, setLocal] = useState(session.entries);
   const [dirty, setDirty] = useState(false);
   const [bilan, setBilan] = useState(session.bilan || DEFAULT_BILAN);
@@ -2985,6 +2989,28 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
   const [niveauxDirty, setNiveauxDirty] = useState(false);
   const [openNiveauConsignes, setOpenNiveauConsignes] = useState({});
   const [openNiveauVideo, setOpenNiveauVideo] = useState({});
+  const [swappingExId, setSwappingExId] = useState(null);
+  const isCoach = role === "coach";
+
+  const swapExercise = (oldExId, newExId) => {
+    if (oldExId === newExId) {
+      setSwappingExId(null);
+      return;
+    }
+    const copy = local.map((e) => (e.exerciceId === oldExId ? { ...e, exerciceId: newExId } : e));
+    setLocal(copy);
+    setDirty(true);
+    setNiveauxParExercice((p) => {
+      const next = { ...p };
+      if (next[oldExId] != null) {
+        next[newExId] = next[oldExId];
+        delete next[oldExId];
+      }
+      return next;
+    });
+    setNiveauxDirty(true);
+    setSwappingExId(null);
+  };
 
   useEffect(() => {
     setNiveauxParExercice(session.niveaux || {});
@@ -3185,10 +3211,46 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                 return (
                   <div key={exId} style={{ marginBottom: 14 }}>
                     <div style={{ fontSize: 13, color: COLORS.accent2, marginBottom: 6, fontFamily: FONT_BODY, fontWeight: 600 }}>
-                      {ex ? exDisplayName(ex) : "Exercice"}
+                      {isCoach ? (
+                        <button
+                          type="button"
+                          onClick={() => setSwappingExId(swappingExId === exId ? null : exId)}
+                          style={{ background: "none", border: "none", padding: 0, color: "inherit", font: "inherit", cursor: "pointer", textDecoration: "underline dotted", textUnderlineOffset: 3 }}
+                          title="Remplacer cet exercice"
+                        >
+                          {ex ? exDisplayName(ex) : "Exercice"}
+                        </button>
+                      ) : (
+                        ex ? exDisplayName(ex) : "Exercice"
+                      )}
                       {warmup && <span style={{ color: COLORS.textFaint, fontWeight: 400, fontSize: 11 }}> — temps en secondes</span>}
                       {gainage && <span style={{ color: COLORS.textFaint, fontWeight: 400, fontSize: 11 }}> — temps d'effort en secondes</span>}
                     </div>
+                    {isCoach && swappingExId === exId && (
+                      <div style={{ ...styles.consignesPanel, marginBottom: 10 }}>
+                        <div style={{ fontSize: 11, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>
+                          Remplacer par un exercice de la zone "{label}"
+                        </div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 220, overflowY: "auto" }}>
+                          {Object.values(exercises)
+                            .filter((cand) => cand.id !== exId && getExerciseZones(cand).some((z) => zoneLabel(z) === label))
+                            .map((cand) => (
+                              <button
+                                key={cand.id}
+                                type="button"
+                                onClick={() => swapExercise(exId, cand.id)}
+                                style={{ ...styles.secondaryBtn, textAlign: "left", padding: "6px 10px" }}
+                              >
+                                {exDisplayName(cand)}
+                              </button>
+                            ))}
+                          {Object.values(exercises).filter((cand) => cand.id !== exId && getExerciseZones(cand).some((z) => zoneLabel(z) === label)).length === 0 && (
+                            <div style={{ fontSize: 12, color: COLORS.textFaint }}>Aucun autre exercice dans cette zone.</div>
+                          )}
+                        </div>
+                        <button type="button" style={{ ...styles.linkBtn, marginTop: 8 }} onClick={() => setSwappingExId(null)}>Annuler</button>
+                      </div>
+                    )}
                     {ex && (() => {
                       const exNiveaux = getExerciseNiveaux(ex, null);
                       const selectedNiveau = exNiveaux[(niveauxParExercice[exId] || 1) - 1];
@@ -3469,7 +3531,7 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
             </div>
           ))}
 
-          <SessionBilanForm bilan={bilan} onChange={updateBilan} />
+          <SessionBilanForm bilan={bilan} onChange={updateBilan} role={role} />
 
           <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8, gap: 10 }}>
             <button style={styles.dangerLinkBtn} onClick={() => setConfirmDelete(true)}>Supprimer la séance</button>
@@ -3554,7 +3616,7 @@ function SessionBilanAvantForm({ bilan, onChange }) {
   );
 }
 
-function SessionBilanForm({ bilan, onChange }) {
+function SessionBilanForm({ bilan, onChange, role }) {
   const sensationOptions = [
     { value: "sad", emoji: "😞", label: "Pas content" },
     { value: "neutral", emoji: "😐", label: "Normal" },
@@ -3622,6 +3684,19 @@ function SessionBilanForm({ bilan, onChange }) {
           placeholder="Toute autre observation sur la séance..."
         />
       </div>
+
+      {role !== "coach" && (
+        <div style={{ marginTop: 16, paddingTop: 16, borderTop: `1px solid ${COLORS.cardBorder}` }}>
+          <a
+            href={LIEN_AVIS}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ ...styles.secondaryBtn, display: "inline-block", textDecoration: "none" }}
+          >
+            ⭐ Laisser un avis Google
+          </a>
+        </div>
+      )}
     </div>
   );
 }
@@ -4508,6 +4583,179 @@ function CTTableView({ clientId, role, data, persistLibrary }) {
 
 const photoJournalKey = (clientId) => `photo-journal-v1-${clientId}`;
 const hydrationKey = (clientId) => `hydration-v1-${clientId}`;
+const documentsKey = (clientId) => `documents-v1-${clientId}`;
+
+function readFileAsDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => resolve(e.target.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function formatFileSize(bytes) {
+  if (bytes < 1024) return `${bytes} o`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} Ko`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} Mo`;
+}
+
+const TAILLE_MAX_DOCUMENT = 5 * 1024 * 1024; // 5 Mo
+
+function DocumentsView({ clientId, role, activeClient }) {
+  const isCoach = role === "coach";
+  const [documents, setDocuments] = useState(null);
+  const [documentsLoaded, setDocumentsLoaded] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!clientId) return;
+    setDocumentsLoaded(false);
+    (async () => {
+      let docs = null;
+      try {
+        const r = await window.storage.get(documentsKey(clientId), true);
+        if (r && r.value) docs = JSON.parse(r.value);
+      } catch (e) {}
+      setDocuments(docs || []);
+      setDocumentsLoaded(true);
+    })();
+  }, [clientId]);
+
+  const persistDocuments = async (newDocs) => {
+    setDocuments(newDocs);
+    try {
+      await window.storage.set(documentsKey(clientId), JSON.stringify(newDocs), true);
+    } catch (e) {
+      setError("Erreur d'enregistrement, réessaie.");
+    }
+  };
+
+  const handleFileSelected = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    setError("");
+    if (file.size > TAILLE_MAX_DOCUMENT) {
+      setError(`Ce fichier est trop volumineux (${formatFileSize(file.size)}). Limite : ${formatFileSize(TAILLE_MAX_DOCUMENT)}.`);
+      return;
+    }
+    setUploading(true);
+    try {
+      const dataUrl = await readFileAsDataURL(file);
+      const entry = {
+        id: "doc" + Math.random().toString(36).slice(2, 9),
+        name: file.name,
+        mimeType: file.type || "application/octet-stream",
+        size: file.size,
+        dataUrl,
+        addedBy: isCoach ? "Coach" : "Client",
+        uploadedAt: new Date().toISOString(),
+      };
+      await persistDocuments([...(documents || []), entry]);
+    } catch (err) {
+      setError("Impossible d'ajouter ce document, réessaie.");
+    }
+    setUploading(false);
+  };
+
+  const deleteDocument = async (id) => {
+    if (!window.confirm("Supprimer définitivement ce document ?")) return;
+    await persistDocuments((documents || []).filter((d) => d.id !== id));
+  };
+
+  const moveDocument = async (index, direction) => {
+    const newIndex = index + direction;
+    if (newIndex < 0 || newIndex >= (documents || []).length) return;
+    const newDocs = [...documents];
+    const [moved] = newDocs.splice(index, 1);
+    newDocs.splice(newIndex, 0, moved);
+    await persistDocuments(newDocs);
+  };
+
+  return (
+    <div>
+      <h2 style={styles.h2}>Mes documents{activeClient ? ` — ${activeClient.name}` : ""}</h2>
+      <p style={{ color: COLORS.textDim, fontSize: 13, marginBottom: 16 }}>
+        Contrat signé, certificat médical, ou tout autre document utile. {isCoach ? "" : "Ton coach peut voir et ajouter des documents ici."}
+      </p>
+
+      <div style={{ marginBottom: 16 }}>
+        <label style={{ ...styles.secondaryBtn, display: "inline-block", cursor: "pointer", opacity: uploading ? 0.6 : 1 }}>
+          {uploading ? "Ajout en cours…" : "+ Ajouter un document"}
+          <input
+            type="file"
+            onChange={handleFileSelected}
+            disabled={uploading}
+            style={{ display: "none" }}
+          />
+        </label>
+        {error && <div style={{ color: COLORS.danger, fontSize: 12, marginTop: 8 }}>{error}</div>}
+      </div>
+
+      {!documentsLoaded ? (
+        <div style={styles.emptyState}>Chargement…</div>
+      ) : documents.length === 0 ? (
+        <div style={styles.emptyState}>Aucun document pour l'instant.</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {documents.map((doc, i) => (
+            <div key={doc.id} style={{ ...styles.card, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+              <a
+                href={doc.dataUrl}
+                download={doc.name}
+                style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none", flex: 1, minWidth: 0 }}
+              >
+                <span style={{ fontSize: 22, flexShrink: 0 }}>
+                  {doc.mimeType && doc.mimeType.includes("pdf") ? "📄" : doc.mimeType && doc.mimeType.startsWith("image/") ? "🖼️" : "📎"}
+                </span>
+                <span style={{ minWidth: 0 }}>
+                  <span style={{ display: "block", fontSize: 13, color: COLORS.text, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {doc.name}
+                  </span>
+                  <span style={{ display: "block", fontSize: 11, color: COLORS.textFaint }}>
+                    {doc.addedBy} · {formatDateFR(doc.uploadedAt.slice(0, 10))} · {formatFileSize(doc.size || 0)}
+                  </span>
+                </span>
+              </a>
+              {isCoach && (
+                <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+                  <button
+                    style={{ ...styles.secondaryBtn, padding: "4px 8px" }}
+                    onClick={() => moveDocument(i, -1)}
+                    disabled={i === 0}
+                    title="Monter"
+                    aria-label="Monter"
+                  >
+                    ↑
+                  </button>
+                  <button
+                    style={{ ...styles.secondaryBtn, padding: "4px 8px" }}
+                    onClick={() => moveDocument(i, 1)}
+                    disabled={i === documents.length - 1}
+                    title="Descendre"
+                    aria-label="Descendre"
+                  >
+                    ↓
+                  </button>
+                  <button
+                    style={styles.trashBtn}
+                    onClick={() => deleteDocument(doc.id)}
+                    title="Supprimer le document"
+                    aria-label="Supprimer le document"
+                  >
+                    🗑️
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function compressImageFile(file, maxWidth = 480, quality = 0.6) {
   return new Promise((resolve, reject) => {
