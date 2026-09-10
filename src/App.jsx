@@ -2207,10 +2207,10 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
         Ces informations aident le coach à personnaliser le suivi. Modifiable par le coach comme par le client.
       </p>
       <div style={styles.card}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(140px, 1fr))", gap: 12, marginBottom: 16 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12, marginBottom: 16 }}>
           {PROFILE_FIELDS.filter((f) => !f.compact && (f.key === "passeSportif" || f.key === "presentSportif")).map((f) => (
             <div key={f.key}>
-              <label style={styles.fieldLabel}>{f.label}</label>
+              <label style={{ ...styles.fieldLabel, textAlign: "center", display: "block" }}>{f.label}</label>
               <AutoGrowTextarea
                 value={local[f.key] || ""}
                 onChange={(e) => updateField(f.key, e.target.value)}
@@ -2222,13 +2222,13 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
 
         {PROFILE_FIELD_GROUPS.filter((g) => g.id === "objectifs").map((group) => (
           <div key={group.title} style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: 11, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>
+            <div style={{ fontSize: 11, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8, textAlign: "center" }}>
               {group.title}
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: `repeat(${group.subFields.length}, minmax(140px, 1fr))`, gap: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
               {group.subFields.map((sf) => (
                 <div key={sf.key}>
-                  <label style={styles.fieldLabel}>{sf.label}</label>
+                  <label style={{ ...styles.fieldLabel, textAlign: "center", display: "block", color: COLORS.accent }}>{sf.label}</label>
                   <AutoGrowTextarea
                     value={local[sf.key] || ""}
                     onChange={(e) => updateField(sf.key, e.target.value)}
@@ -2245,10 +2245,10 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
           </div>
         ))}
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(140px, 1fr))", gap: 12, marginBottom: 16 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12, marginBottom: 16 }}>
           {PROFILE_FIELDS.filter((f) => !f.compact && (f.key === "sante" || f.key === "exercicesAEviter")).map((f) => (
             <div key={f.key}>
-              <label style={styles.fieldLabel}>{f.label}</label>
+              <label style={{ ...styles.fieldLabel, textAlign: "center", display: "block" }}>{f.label}</label>
               <AutoGrowTextarea
                 value={local[f.key] || ""}
                 onChange={(e) => updateField(f.key, e.target.value)}
@@ -2260,13 +2260,13 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
 
         {PROFILE_FIELD_GROUPS.filter((g) => g.id !== "objectifs").map((group) => (
           <div key={group.title} style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: 11, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>
+            <div style={{ fontSize: 11, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8, textAlign: "center" }}>
               {group.title}
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: `repeat(${group.subFields.length}, minmax(140px, 1fr))`, gap: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
               {group.subFields.map((sf) => (
                 <div key={sf.key}>
-                  <label style={styles.fieldLabel}>{sf.label}</label>
+                  <label style={{ ...styles.fieldLabel, textAlign: "center", display: "block" }}>{sf.label}</label>
                   <AutoGrowTextarea
                     value={local[sf.key] || ""}
                     onChange={(e) => updateField(sf.key, e.target.value)}
@@ -2281,7 +2281,7 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
           {PROFILE_FIELDS.filter((f) => f.compact).map((f) => (
             <div key={f.key}>
-              <label style={styles.fieldLabel}>{f.label}</label>
+              <label style={{ ...styles.fieldLabel, textAlign: "center", display: "block" }}>{f.label}</label>
               <AutoGrowTextarea
                 value={local[f.key] || ""}
                 onChange={(e) => updateField(f.key, e.target.value)}
