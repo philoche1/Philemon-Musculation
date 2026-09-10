@@ -44,7 +44,10 @@ export default async function handler(req, res) {
               <p style="font-size:13px; color:#374151; margin:0 0 6px 0;"><strong>Sur iPhone (Safari) :</strong> appuie sur l'icône de partage <span style="font-family: monospace;">⬆️</span> en bas de l'écran, puis "Sur l'écran d'accueil".</p>
               <p style="font-size:13px; color:#374151; margin:0;"><strong>Sur Android (Chrome) :</strong> appuie sur les 3 points en haut à droite, puis "Installer l'application" ou "Ajouter à l'écran d'accueil".</p>
             </div>
-            <p style="margin-top:20px;">Une petite vidéo pour bien démarrer : <a href="${process.env.WELCOME_VIDEO_URL_MUSCU || '#'}">voir la vidéo</a></p>
+            <p style="margin-top:24px; margin-bottom:8px;">Une petite vidéo pour bien démarrer :</p>
+            <a href="${process.env.WELCOME_VIDEO_URL_MUSCU || '#'}" style="display:block; text-decoration:none;">
+              <img src="https://suivi.philemon-musculation.com/philemon-video-thumbnail.png" alt="Voir la vidéo de bienvenue" width="500" style="display:block; width:100%; max-width:500px; height:auto; border-radius:8px; border:0;" />
+            </a>
           </div>
         `,
       }),
