@@ -4878,6 +4878,25 @@ function DocumentsView({ clientId, role, activeClient }) {
     await persistDocuments(newDocs);
   };
 
+  // Les URL "data:" sont bloquées par certains navigateurs pour une ouverture
+  // directe en nouvel onglet (page blanche, ou téléchargement forcé). On
+  // convertit donc en "blob:" au moment du clic, ce qui s'affiche de façon
+  // fiable. L'onglet est ouvert tout de suite (avant la conversion, qui est
+  // asynchrone) pour éviter que le navigateur ne bloque l'ouverture comme
+  // un pop-up indésirable.
+  const previewDocument = async (doc) => {
+    const newTab = window.open("", "_blank");
+    try {
+      const res = await fetch(doc.dataUrl);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      if (newTab) newTab.location.href = blobUrl;
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+    } catch (e) {
+      if (newTab) newTab.location.href = doc.dataUrl;
+    }
+  };
+
   return (
     <div>
       <h2 style={styles.h2}>Mes documents{activeClient ? ` — ${activeClient.name}` : ""}</h2>
@@ -4906,11 +4925,10 @@ function DocumentsView({ clientId, role, activeClient }) {
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {documents.map((doc, i) => (
             <div key={doc.id} style={{ ...styles.card, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-              <a
-                href={doc.dataUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none", flex: 1, minWidth: 0 }}
+              <button
+                type="button"
+                onClick={() => previewDocument(doc)}
+                style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none", flex: 1, minWidth: 0, background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer" }}
                 title="Aperçu"
               >
                 <span style={{ fontSize: 22, flexShrink: 0 }}>
@@ -4924,7 +4942,7 @@ function DocumentsView({ clientId, role, activeClient }) {
                     {doc.addedBy} · {formatDateFR(doc.uploadedAt.slice(0, 10))} · {formatFileSize(doc.size || 0)}
                   </span>
                 </span>
-              </a>
+              </button>
               <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
                 <a
                   href={doc.dataUrl}
