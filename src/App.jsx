@@ -158,6 +158,45 @@ function todayISO() {
   return d.toISOString().slice(0, 10);
 }
 
+function toICSDate(date) {
+  return date.toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
+}
+
+// Génère un fichier .ics universel (Google, Outlook, Apple Calendar...) pour
+// une réservation donnée, afin que le client puisse l'ajouter à son agenda
+// sans dépendre du filtre anti-spam de Google ou d'un email de confirmation.
+function generateICSContent(booking, dureeMinutes) {
+  const start = new Date(booking.start_time);
+  const end = new Date(start.getTime() + dureeMinutes * 60000);
+  const identifiant = (booking.uri || uid("seance")).replace(/[^a-zA-Z0-9]/g, "") + "@philemon-musculation";
+  return [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Philemon Musculation//FR",
+    "BEGIN:VEVENT",
+    `UID:${identifiant}`,
+    `DTSTAMP:${toICSDate(new Date())}`,
+    `DTSTART:${toICSDate(start)}`,
+    `DTEND:${toICSDate(end)}`,
+    "SUMMARY:Séance — Philémon Musculation",
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ].join("\r\n");
+}
+
+function downloadICS(booking, dureeMinutes) {
+  const content = generateICSContent(booking, dureeMinutes);
+  const blob = new Blob([content], { type: "text/calendar;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "seance-philemon-musculation.ics";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
 export default function App() {
   const [role, setRole] = useState(null);
   const [roleLoaded, setRoleLoaded] = useState(false);
@@ -2011,6 +2050,7 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
           .filter((b) => b.status !== "annulee" && new Date(b.start_time) > new Date())
           .sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
         if (upcoming.length === 0) return null;
+        const dureeMinutes = { "30min": 30, "1h": 60, "1h30": 90 }[activeClient.typeSeance || "1h"] || 60;
         return (
           <div style={{ ...styles.card, marginBottom: 16 }}>
             <div style={{ fontSize: 11, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 10 }}>
@@ -2018,7 +2058,15 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
             </div>
             {upcoming.map((b, i) => (
               <div key={i} style={{ fontSize: 14, padding: "6px 0" }}>
-               {new Date(b.start_time).toLocaleString("fr-FR", { weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })} {b.cancel_url && (<a href={b.cancel_url} target="_blank" rel="noopener noreferrer" style={{ marginLeft: 12, fontSize: 12, color: COLORS.accent, textDecoration: "underline" }}>Annuler</a>)} {b.reschedule_url && (<a href={b.reschedule_url} target="_blank" rel="noopener noreferrer" style={{ marginLeft: 12, fontSize: 12, color: COLORS.accent, textDecoration: "underline" }}>Replanifier</a>)}
+               {new Date(b.start_time).toLocaleString("fr-FR", { weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })}
+               {" "}
+               <button
+                 onClick={() => downloadICS(b, dureeMinutes)}
+                 style={{ marginLeft: 12, fontSize: 12, color: COLORS.accent, textDecoration: "underline", background: "none", border: "none", padding: 0, cursor: "pointer", font: "inherit" }}
+               >
+                 📅 Ajouter à mon agenda
+               </button>
+               {b.cancel_url && (<a href={b.cancel_url} target="_blank" rel="noopener noreferrer" style={{ marginLeft: 12, fontSize: 12, color: COLORS.accent, textDecoration: "underline" }}>Annuler</a>)} {b.reschedule_url && (<a href={b.reschedule_url} target="_blank" rel="noopener noreferrer" style={{ marginLeft: 12, fontSize: 12, color: COLORS.accent, textDecoration: "underline" }}>Replanifier</a>)}
           </div>
                 ))}
           </div>
