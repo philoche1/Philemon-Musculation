@@ -2203,9 +2203,9 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
         );
       })()}
 
-      <p style={{ color: COLORS.textDim, fontSize: 13, marginBottom: 16 }}>
-        Ces informations aident le coach à personnaliser le suivi. Modifiable par le coach comme par le client.
-      </p>
+      <div style={{ textAlign: "center", fontFamily: FONT_DISPLAY, fontSize: 23, fontWeight: 700, color: COLORS.accent, marginBottom: 16 }}>
+        BILAN
+      </div>
       <div style={styles.card}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12, marginBottom: 16 }}>
           {PROFILE_FIELDS.filter((f) => !f.compact && (f.key === "passeSportif" || f.key === "presentSportif")).map((f) => (
@@ -2222,7 +2222,7 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
 
         {PROFILE_FIELD_GROUPS.filter((g) => g.id === "objectifs").map((group) => (
           <div key={group.title} style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: 11, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8, textAlign: "center" }}>
+            <div style={{ fontSize: 11, color: COLORS.accent, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8, textAlign: "center" }}>
               {group.title}
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
