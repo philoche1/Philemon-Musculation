@@ -16,6 +16,8 @@ const COACH_AUTH_KEY = "coach-authed-v1";
 const sessionsKey = (clientId) => `sessions-v1-${clientId}`;
 const profileKey = (clientId) => `profile-v1-${clientId}`;
 const bookingsKey = (clientId) => `calendly-bookings-v1-${clientId}`;
+const PROSPECTS_KEY = "prospects-v1";
+const PROSPECT_STAGES = ["À contacter", "RDV pris", "Séance faite", "Client", "Perdu"];
 
 function uid(prefix) {
   return prefix + Math.random().toString(36).slice(2, 9);
@@ -362,6 +364,9 @@ export default function App() {
   const [profile, setProfile] = useState(null);
   const [profileLoaded, setProfileLoaded] = useState(false);
 
+  const [prospects, setProspects] = useState(null);
+  const [prospectsLoaded, setProspectsLoaded] = useState(false);
+
   const [view, setView] = useState("profil");
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState(null);
@@ -520,6 +525,18 @@ useEffect(() => {
     })();
   }, [clientId]);
 
+  useEffect(() => {
+    (async () => {
+      let pr = null;
+      try {
+        const r = await window.storage.get(PROSPECTS_KEY, true);
+        if (r && r.value) pr = JSON.parse(r.value);
+      } catch (e) {}
+      setProspects(pr || []);
+      setProspectsLoaded(true);
+    })();
+  }, []);
+
   const chooseRole = async (r) => {
     setRole(r);
     try { await window.storage.set(ROLE_KEY, r, false); } catch (e) {}
@@ -610,6 +627,27 @@ useEffect(() => {
   try { await window.storage.delete(bookingsKey(id), true); } catch (e) {}
   if (clientId === id) setClientId(null);
 };
+
+const addProspect = useCallback(async (data) => {
+  const newP = { id: uid("prospect"), stage: 0, ...data };
+  const newList = [...(prospects || []), newP];
+  setProspects(newList);
+  try { await window.storage.set(PROSPECTS_KEY, JSON.stringify(newList), true); } catch (e) {}
+}, [prospects]);
+
+const moveProspect = useCallback(async (id, delta) => {
+  const newList = (prospects || []).map((p) =>
+    p.id === id ? { ...p, stage: Math.max(0, Math.min(PROSPECT_STAGES.length - 1, p.stage + delta)) } : p
+  );
+  setProspects(newList);
+  try { await window.storage.set(PROSPECTS_KEY, JSON.stringify(newList), true); } catch (e) {}
+}, [prospects]);
+
+const deleteProspect = useCallback(async (id) => {
+  const newList = (prospects || []).filter((p) => p.id !== id);
+  setProspects(newList);
+  try { await window.storage.set(PROSPECTS_KEY, JSON.stringify(newList), true); } catch (e) {}
+}, [prospects]);
 
    const loginClient = async (email, pin) => {
     const res = await fetch("/api/musculation-client-login", {
@@ -1048,6 +1086,15 @@ bookings={bookings}
             )}
             {view === "exercices" && (
               <ExercisesView data={data} persistLibrary={persistLibrary} role={roleEffectif} />
+            )}
+            {view === "prospects" && role === "coach" && (
+              <ProspectsView
+                prospects={prospects}
+                prospectsLoaded={prospectsLoaded}
+                onAdd={addProspect}
+                onMove={moveProspect}
+                onDelete={deleteProspect}
+              />
             )}
           </>
         )}
@@ -1583,6 +1630,7 @@ function Header({ role, view, setView, clientName, onChangeClient, saving, onLog
     { id: "alimentation", label: "Alimentation" },
     { id: "documents", label: "Documents" },
   ];
+  if (role === "coach") tabs.push({ id: "prospects", label: "Prospects" });
   return (
     <div style={styles.header}>
       <div style={styles.headerTop}>
@@ -1968,6 +2016,91 @@ function BilanCard({ bilan, onSave, onDelete, role }) {
         >
           Enregistrer
         </button>
+      </div>
+    </div>
+  );
+}
+
+function ProspectsView({ prospects, prospectsLoaded, onAdd, onMove, onDelete }) {
+  const [name, setName] = useState("");
+  const [contact, setContact] = useState("");
+  const [source, setSource] = useState("Pub Meta");
+  const [notes, setNotes] = useState("");
+
+  if (!prospectsLoaded) {
+    return <div style={{ ...styles.emptyState, padding: "40px 0" }}>Chargement des prospects…</div>;
+  }
+
+  const submit = () => {
+    if (!name.trim()) return;
+    onAdd({ name: name.trim(), contact: contact.trim(), source, notes: notes.trim() });
+    setName("");
+    setContact("");
+    setNotes("");
+  };
+
+  return (
+    <div>
+      <h2 style={styles.h2}>Prospects</h2>
+      <div style={{ ...styles.card, marginBottom: 20 }}>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+          <div style={{ minWidth: 140 }}>
+            <label style={styles.fieldLabel}>Nom</label>
+            <input style={styles.textInput} value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex: Marie D." />
+          </div>
+          <div style={{ minWidth: 140 }}>
+            <label style={styles.fieldLabel}>Contact</label>
+            <input style={styles.textInput} value={contact} onChange={(e) => setContact(e.target.value)} placeholder="Téléphone ou email" />
+          </div>
+          <div style={{ minWidth: 140 }}>
+            <label style={styles.fieldLabel}>Source</label>
+            <select style={styles.textInput} value={source} onChange={(e) => setSource(e.target.value)}>
+              <option>Pub Meta</option>
+              <option>Site internet</option>
+              <option>Bouche à oreille</option>
+              <option>Autre</option>
+            </select>
+          </div>
+          <div style={{ minWidth: 200, flex: 1 }}>
+            <label style={styles.fieldLabel}>Notes</label>
+            <input style={styles.textInput} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Objectif, disponibilités..." />
+          </div>
+          <button style={styles.primaryBtn} onClick={submit}>+ Ajouter</button>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", gap: 12, overflowX: "auto", paddingBottom: 10 }}>
+        {PROSPECT_STAGES.map((stageName, stageIdx) => {
+          const items = (prospects || []).filter((p) => p.stage === stageIdx);
+          return (
+            <div key={stageName} style={{ minWidth: 220, flex: 1, background: COLORS.bg2, borderRadius: 10, padding: 12 }}>
+              <div style={{ fontSize: 11, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 10, display: "flex", justifyContent: "space-between" }}>
+                {stageName} <span>{items.length}</span>
+              </div>
+              {items.length === 0 && <div style={{ fontSize: 12, color: COLORS.textFaint }}>Vide</div>}
+              {items.map((p) => (
+                <div key={p.id} style={{ ...styles.card, marginBottom: 8, padding: 10 }}>
+                  <div style={{ fontWeight: 700, fontSize: 13, color: COLORS.text }}>{p.name}</div>
+                  {p.contact && <div style={{ fontSize: 12, color: COLORS.textDim }}>{p.contact}</div>}
+                  <div style={{ fontSize: 10, color: COLORS.accent, background: "rgba(255,122,26,0.12)", display: "inline-block", padding: "2px 6px", borderRadius: 10, margin: "4px 0" }}>{p.source}</div>
+                  {p.notes && <div style={{ fontSize: 12, color: COLORS.textDim, marginBottom: 6 }}>{p.notes}</div>}
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div>
+                      {stageIdx > 0 && <button style={styles.linkBtn} onClick={() => onMove(p.id, -1)}>◀</button>}
+                      {stageIdx < PROSPECT_STAGES.length - 1 && <button style={{ ...styles.linkBtn, marginLeft: 8 }} onClick={() => onMove(p.id, 1)}>▶</button>}
+                    </div>
+                    <button
+                      style={{ ...styles.linkBtn, color: COLORS.danger }}
+                      onClick={() => { if (window.confirm(`Supprimer ${p.name} ?`)) onDelete(p.id); }}
+                    >
+                      Suppr.
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
