@@ -1808,9 +1808,12 @@ function AutoGrowTextarea({ value, onChange, style }) {
 
 // Contenu éditable d'un bilan précis (gère son propre brouillon local et
 // son propre statut "modifié", indépendamment des autres bilans).
-function BilanCard({ bilan, onSave }) {
+function BilanCard({ bilan, onSave, onDelete, role }) {
   const [local, setLocal] = useState(bilan);
   const [dirty, setDirty] = useState(false);
+  const [editingNom, setEditingNom] = useState(false);
+  const [nomInput, setNomInput] = useState(bilan.nom);
+  const isCoach = role === "coach";
 
   const updateField = (key, value) => {
     setLocal((p) => ({ ...p, [key]: value }));
@@ -1822,10 +1825,56 @@ function BilanCard({ bilan, onSave }) {
     setDirty(false);
   };
 
+  const startRename = () => {
+    setNomInput(local.nom);
+    setEditingNom(true);
+  };
+
+  const confirmRename = () => {
+    if (!nomInput.trim()) return;
+    const updated = { ...local, nom: nomInput.trim() };
+    setLocal(updated);
+    onSave(updated);
+    setEditingNom(false);
+  };
+
   return (
     <div style={{ ...styles.card, borderColor: COLORS.accent }}>
-      <div style={{ textAlign: "center", fontFamily: FONT_DISPLAY, fontSize: 15, color: COLORS.accent, marginBottom: 14, paddingBottom: 10, borderBottom: `1px solid ${COLORS.cardBorder}` }}>
-        {bilan.nom} <span style={{ color: COLORS.textFaint, fontWeight: 400, fontSize: 13 }}>· {formatDateFR(bilan.date)}</span>
+      <div style={{ marginBottom: 14, paddingBottom: 10, borderBottom: `1px solid ${COLORS.cardBorder}` }}>
+        {editingNom ? (
+          <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "center", flexWrap: "wrap" }}>
+            <input
+              style={{ ...styles.textInput, marginBottom: 0, maxWidth: 220, textAlign: "center" }}
+              value={nomInput}
+              onChange={(e) => setNomInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && confirmRename()}
+              autoFocus
+            />
+            <button style={styles.secondaryBtn} onClick={confirmRename}>Valider</button>
+            <button style={styles.linkBtn} onClick={() => setEditingNom(false)}>Annuler</button>
+          </div>
+        ) : (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, flexWrap: "wrap" }}>
+            <div style={{ textAlign: "center", fontFamily: FONT_DISPLAY, fontSize: 15, color: COLORS.accent }}>
+              {local.nom} <span style={{ color: COLORS.textFaint, fontWeight: 400, fontSize: 13 }}>· {formatDateFR(local.date)}</span>
+            </div>
+            {isCoach && (
+              <div style={{ display: "flex", gap: 8 }}>
+                <button style={styles.linkBtn} onClick={startRename}>Renommer</button>
+                <button
+                  style={styles.dangerLinkBtn}
+                  onClick={() => {
+                    if (window.confirm(`Supprimer définitivement le bilan "${local.nom}" ?`)) {
+                      onDelete(local.id);
+                    }
+                  }}
+                >
+                  Supprimer
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12, marginBottom: 16 }}>
         {PROFILE_FIELDS.filter((f) => !f.compact && (f.key === "passeSportif" || f.key === "presentSportif")).map((f) => (
@@ -1993,6 +2042,13 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
     const newBilans = bilans.map((b) => (b.id === updatedBilan.id ? updatedBilan : b));
     setBilans(newBilans);
     persistProfile({ bilans: newBilans });
+  };
+
+  const deleteBilan = (id) => {
+    const newBilans = bilans.filter((b) => b.id !== id);
+    setBilans(newBilans);
+    persistProfile({ bilans: newBilans });
+    setExpandedBilanIds((prev) => prev.filter((x) => x !== id));
   };
 
   // Compatibilité : les clients créés avant la distinction présentiel/distanciel
@@ -2543,7 +2599,7 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
             .filter((b) => expandedBilanIds.includes(b.id))
             .map((b) => (
               <div key={b.id} style={{ marginBottom: 16 }}>
-                <BilanCard bilan={b} onSave={saveBilan} />
+                <BilanCard bilan={b} onSave={saveBilan} onDelete={deleteBilan} role={role} />
               </div>
             ))}
         </>
