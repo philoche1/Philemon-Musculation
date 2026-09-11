@@ -40,7 +40,7 @@ export default async function handler(req, res) {
             <p style="margin-top:24px;"><a href="https://suivi.philemon-musculation.com" style="background:#FF6400;color:white;padding:10px 18px;border-radius:8px;text-decoration:none;">Accéder à mon espace</a></p>
             <p style="margin-top:24px; margin-bottom:8px;">Une petite vidéo pour bien démarrer :</p>
             <a href="${process.env.WELCOME_VIDEO_URL_MUSCU || '#'}" style="display:block; text-decoration:none; text-align:center;">
-              <img src="https://suivi.philemon-musculation.com/philemon-video-thumbnail.png?v=2" alt="Voir la vidéo de bienvenue" width="280" style="display:inline-block; width:280px; max-width:100%; height:auto; border-radius:8px; border:0;" />
+              <img src="https://suivi.philemon-musculation.com/philemon-video-thumbnail.png?v=3" alt="Voir la vidéo de bienvenue" width="280" height="326" style="display:inline-block; width:280px; height:326px; max-width:100%; border-radius:8px; border:0;" />
             </a>
           </div>
         `,
