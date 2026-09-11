@@ -228,6 +228,113 @@ function downloadICS(booking, dureeMinutes) {
   setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
 
+// Bannière d'invitation à installer l'app sur l'écran d'accueil (mobile
+// uniquement). Sur Android/Chrome, utilise la véritable invite native du
+// navigateur. Sur iOS/Safari (qui n'a pas cette API), affiche des
+// instructions manuelles à la place.
+function InstallAppBanner() {
+  const [deferredPrompt, setDeferredPrompt] = useState(null);
+  const [dismissed, setDismissed] = useState(false);
+  const [platform, setPlatform] = useState(null); // "ios" | "android" | null
+
+  useEffect(() => {
+    try {
+      if (window.localStorage.getItem("install-banner-dismissed-v1") === "1") {
+        setDismissed(true);
+        return;
+      }
+    } catch (e) {}
+
+    // Déjà installée (mode standalone) : rien à afficher.
+    const isStandalone =
+      window.matchMedia("(display-mode: standalone)").matches ||
+      window.navigator.standalone === true;
+    if (isStandalone) return;
+
+    const ua = window.navigator.userAgent || "";
+    const isIOS = /iPad|iPhone|iPod/.test(ua);
+    const isAndroid = /Android/.test(ua);
+    const isMobile = isIOS || isAndroid || window.innerWidth < 768;
+    if (!isMobile) return;
+
+    if (isIOS) {
+      setPlatform("ios");
+    } else if (isAndroid) {
+      setPlatform("android");
+    }
+
+    const handler = (e) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+      setPlatform("android");
+    };
+    window.addEventListener("beforeinstallprompt", handler);
+    return () => window.removeEventListener("beforeinstallprompt", handler);
+  }, []);
+
+  const dismiss = () => {
+    setDismissed(true);
+    try { window.localStorage.setItem("install-banner-dismissed-v1", "1"); } catch (e) {}
+  };
+
+  const install = async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    try { await deferredPrompt.userChoice; } catch (e) {}
+    setDeferredPrompt(null);
+    dismiss();
+  };
+
+  if (dismissed || !platform) return null;
+  // Sur Android, on attend que le navigateur confirme que l'app est
+  // installable (événement beforeinstallprompt) avant d'afficher la bannière.
+  if (platform === "android" && !deferredPrompt) return null;
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        left: 12,
+        right: 12,
+        bottom: 12,
+        zIndex: 100,
+        background: COLORS.card,
+        border: `1px solid ${COLORS.accent}`,
+        borderRadius: 12,
+        padding: "14px 16px",
+        boxShadow: "0 4px 20px rgba(0,0,0,0.4)",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+        <span style={{ fontSize: 22, flexShrink: 0 }}>📲</span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontFamily: FONT_DISPLAY, fontSize: 14, color: COLORS.text, marginBottom: 4 }}>
+            Installe ton suivi sur ton écran d'accueil
+          </div>
+          {platform === "android" ? (
+            <>
+              <div style={{ fontSize: 12, color: COLORS.textDim, marginBottom: 10 }}>
+                Accède à ton suivi en un tap, comme une vraie application.
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button style={styles.primaryBtn} onClick={install}>Installer</button>
+                <button style={styles.linkBtn} onClick={dismiss}>Plus tard</button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div style={{ fontSize: 12, color: COLORS.textDim, marginBottom: 10 }}>
+                Appuie sur l'icône de partage <span style={{ fontFamily: "monospace" }}>⬆️</span> en bas de l'écran, puis "Sur l'écran d'accueil".
+              </div>
+              <button style={styles.linkBtn} onClick={dismiss}>Compris</button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [role, setRole] = useState(null);
   const [roleLoaded, setRoleLoaded] = useState(false);
@@ -824,11 +931,14 @@ useEffect(() => {
 
   if (role === "coach" && !coachAuthed) {
     return (
+      <>
         <CoachAuth
         hasAccount={!!coachAccount}
         onCreate={createCoachAccount}
         onLogin={loginCoach}
       />
+        <InstallAppBanner />
+      </>
     );
   }
 
@@ -837,6 +947,7 @@ useEffect(() => {
 
   if (needsClientSelection) {
     return (
+      <>
         <ClientSelect
         clients={clients}
                     role={role}
@@ -847,6 +958,8 @@ useEffect(() => {
         onResendWelcome={renvoyerEmailBienvenue}
         onForgotPin={forgotPin}
       />
+        <InstallAppBanner />
+      </>
     );
   }
 
@@ -940,6 +1053,7 @@ bookings={bookings}
         )}
       </div>
       {toast && <div style={styles.toast}>{toast}</div>}
+      <InstallAppBanner />
     </div>
   );
 }
