@@ -38,15 +38,9 @@ export default async function handler(req, res) {
               ${pin}
             </div>
             <p style="margin-top:24px;"><a href="https://suivi.philemon-musculation.com" style="background:#FF6400;color:white;padding:10px 18px;border-radius:8px;text-decoration:none;">Accéder à mon espace</a></p>
-            <div style="background:#F2F4F7; border-radius:8px; padding:16px; margin-top:20px;">
-              <p style="margin:0 0 8px 0; font-weight:600;">📱 Astuce : garde ton suivi à portée de main</p>
-              <p style="font-size:13px; color:#374151; margin:0 0 10px 0;">Une fois connecté(e), tu peux ajouter ton espace directement sur ton écran d'accueil, comme une vraie application :</p>
-              <p style="font-size:13px; color:#374151; margin:0 0 6px 0;"><strong>Sur iPhone (Safari) :</strong> appuie sur l'icône de partage <span style="font-family: monospace;">⬆️</span> en bas de l'écran, puis "Sur l'écran d'accueil".</p>
-              <p style="font-size:13px; color:#374151; margin:0;"><strong>Sur Android (Chrome) :</strong> appuie sur les 3 points en haut à droite, puis "Installer l'application" ou "Ajouter à l'écran d'accueil".</p>
-            </div>
             <p style="margin-top:24px; margin-bottom:8px;">Une petite vidéo pour bien démarrer :</p>
-            <a href="${process.env.WELCOME_VIDEO_URL_MUSCU || '#'}" style="display:block; text-decoration:none;">
-              <img src="https://suivi.philemon-musculation.com/philemon-video-thumbnail.png" alt="Voir la vidéo de bienvenue" width="500" style="display:block; width:100%; max-width:500px; height:auto; border-radius:8px; border:0;" />
+            <a href="${process.env.WELCOME_VIDEO_URL_MUSCU || '#'}" style="display:block; text-decoration:none; text-align:center;">
+              <img src="https://suivi.philemon-musculation.com/philemon-video-thumbnail.png" alt="Voir la vidéo de bienvenue" width="280" style="display:inline-block; width:280px; max-width:100%; height:auto; border-radius:8px; border:0;" />
             </a>
           </div>
         `,
