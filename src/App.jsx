@@ -3628,7 +3628,7 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
   const [local, setLocal] = useState(session.entries);
   const [bilan, setBilan] = useState(session.bilan || DEFAULT_BILAN);
   const [bilanAvant, setBilanAvant] = useState(session.bilanAvant || DEFAULT_BILAN_AVANT);
-  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(null);
   const [openConsignes, setOpenConsignes] = useState({});
   const [openVideo, setOpenVideo] = useState({});
   const [openTimer, setOpenTimer] = useState({});
@@ -3721,7 +3721,7 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
   }, [session.bilanAvant]);
 
   useEffect(() => {
-    if (!expanded) setConfirmDelete(false);
+    if (!expanded) setConfirmDelete(null);
   }, [expanded]);
 
   const grouped = groupBySeries(local);
@@ -3807,7 +3807,7 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
   const requestDelete = (e) => {
     e.stopPropagation();
     onExpand();
-    setConfirmDelete(true);
+    setConfirmDelete("top");
   };
 
   return (
@@ -3839,11 +3839,11 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
         <span style={{ color: COLORS.textFaint, fontSize: 18, flexShrink: 0, marginLeft: 12 }}>{expanded ? "−" : "+"}</span>
       </div>
 
-      {confirmDelete && (
+      {confirmDelete === "top" && (
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginTop: 12, padding: "10px 12px", background: "rgba(255,107,107,0.08)", border: `1px solid ${COLORS.danger}`, borderRadius: 8 }}>
           <span style={{ fontSize: 12, color: COLORS.text }}>Supprimer définitivement cette séance ?</span>
           <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
-            <button style={styles.secondaryBtn} onClick={() => setConfirmDelete(false)}>Annuler</button>
+            <button style={styles.secondaryBtn} onClick={() => setConfirmDelete(null)}>Annuler</button>
             <button style={styles.dangerBtn} onClick={onDelete}>Supprimer</button>
           </div>
         </div>
@@ -4350,8 +4350,24 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
           <SessionBilanForm bilan={bilan} onChange={updateBilan} role={role} />
 
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8, gap: 10 }}>
-            <button style={styles.dangerLinkBtn} onClick={() => setConfirmDelete(true)}>Supprimer la séance</button>
+            <button style={styles.dangerLinkBtn} onClick={() => setConfirmDelete("bottom")}>Supprimer la séance</button>
             <span style={{ fontSize: 11, color: COLORS.textFaint }}>Enregistré automatiquement</span>
+          </div>
+
+          {confirmDelete === "bottom" && (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginTop: 10, padding: "10px 12px", background: "rgba(255,107,107,0.08)", border: `1px solid ${COLORS.danger}`, borderRadius: 8 }}>
+              <span style={{ fontSize: 12, color: COLORS.text }}>Supprimer définitivement cette séance ?</span>
+              <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+                <button style={styles.secondaryBtn} onClick={() => setConfirmDelete(null)}>Annuler</button>
+                <button style={styles.dangerBtn} onClick={onDelete}>Supprimer</button>
+              </div>
+            </div>
+          )}
+
+          <div style={{ textAlign: "center", marginTop: 16 }}>
+            <button style={styles.secondaryBtn} onClick={onToggle}>
+              − Réduire la séance
+            </button>
           </div>
         </div>
       )}
