@@ -1009,6 +1009,7 @@ const deleteProspect = useCallback(async (id) => {
     <div style={styles.app}>
          <Header
         role={role}
+        roleEffectif={roleEffectif}
         view={view}
         setView={setView}
         apercuClient={apercuClient}
@@ -1618,7 +1619,7 @@ function ClientLogin({ onLogin, onChoose, onChangeRole, onForgotPin }) {
   );
 }
 
-function Header({ role, view, setView, clientName, onChangeClient, saving, onLogoutCoach, apercuClient, onToggleApercuClient }) {
+function Header({ role, roleEffectif, view, setView, clientName, onChangeClient, saving, onLogoutCoach, apercuClient, onToggleApercuClient }) {
   const tabs = [
     { id: "profil", label: "Profil" },
     { id: "suivi", label: "Suivi" },
@@ -1630,7 +1631,7 @@ function Header({ role, view, setView, clientName, onChangeClient, saving, onLog
     { id: "alimentation", label: "Alimentation" },
     { id: "documents", label: "Documents" },
   ];
-  if (role === "coach") tabs.push({ id: "prospects", label: "Prospects" });
+  if (roleEffectif === "coach") tabs.push({ id: "prospects", label: "Prospects" });
   return (
     <div style={styles.header}>
       <div style={styles.headerTop}>
@@ -3625,17 +3626,13 @@ const DEFAULT_BILAN_AVANT = { forme: null, sommeil: null, alimentation: null, do
 
 function SessionCard({ session, exercises, allSessions, programName, isDistanciel, role, expanded, onToggle, onExpand, onSave, onDelete }) {
   const [local, setLocal] = useState(session.entries);
-  const [dirty, setDirty] = useState(false);
   const [bilan, setBilan] = useState(session.bilan || DEFAULT_BILAN);
-  const [bilanDirty, setBilanDirty] = useState(false);
   const [bilanAvant, setBilanAvant] = useState(session.bilanAvant || DEFAULT_BILAN_AVANT);
-  const [bilanAvantDirty, setBilanAvantDirty] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [openConsignes, setOpenConsignes] = useState({});
   const [openVideo, setOpenVideo] = useState({});
   const [openTimer, setOpenTimer] = useState({});
   const [niveauxParExercice, setNiveauxParExercice] = useState(session.niveaux || {});
-  const [niveauxDirty, setNiveauxDirty] = useState(false);
   const [openNiveauConsignes, setOpenNiveauConsignes] = useState({});
   const [openNiveauVideo, setOpenNiveauVideo] = useState({});
   const [swappingExId, setSwappingExId] = useState(null);
@@ -3648,17 +3645,14 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
       return;
     }
     const copy = local.map((e) => (e.exerciceId === oldExId ? { ...e, exerciceId: newExId } : e));
+    const newNiveaux = { ...niveauxParExercice };
+    if (newNiveaux[oldExId] != null) {
+      newNiveaux[newExId] = newNiveaux[oldExId];
+      delete newNiveaux[oldExId];
+    }
     setLocal(copy);
-    setDirty(true);
-    setNiveauxParExercice((p) => {
-      const next = { ...p };
-      if (next[oldExId] != null) {
-        next[newExId] = next[oldExId];
-        delete next[oldExId];
-      }
-      return next;
-    });
-    setNiveauxDirty(true);
+    setNiveauxParExercice(newNiveaux);
+    onSave({ entries: copy, bilan, bilanAvant, niveaux: newNiveaux });
     setSwappingExId(null);
   };
 
@@ -3668,22 +3662,21 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
     const baseEntries = makeEntries([newExId], exercises);
     const previousMap = getPreviousEntriesSameSeance(allSessions, session.seanceNom, session.id);
     const newEntries = applyPreviousEntries(baseEntries, previousMap);
-    setLocal((prev) => [...prev, ...newEntries]);
-    setDirty(true);
+    const updated = [...local, ...newEntries];
+    setLocal(updated);
+    onSave({ entries: updated, bilan, bilanAvant, niveaux: niveauxParExercice });
     setAddingAnchorExId(null);
   };
 
   // Retire complètement un exercice (et toutes ses séries) de la séance.
   const removeExerciseFromSession = (exId) => {
     if (!window.confirm("Retirer cet exercice (et toutes ses séries) de la séance ?")) return;
-    setLocal((prev) => prev.filter((e) => e.exerciceId !== exId));
-    setDirty(true);
-    setNiveauxParExercice((p) => {
-      const next = { ...p };
-      delete next[exId];
-      return next;
-    });
-    setNiveauxDirty(true);
+    const updated = local.filter((e) => e.exerciceId !== exId);
+    const newNiveaux = { ...niveauxParExercice };
+    delete newNiveaux[exId];
+    setLocal(updated);
+    setNiveauxParExercice(newNiveaux);
+    onSave({ entries: updated, bilan, bilanAvant, niveaux: newNiveaux });
   };
 
   // Change l'ordre d'affichage de deux exercices voisins au sein de la même
@@ -3708,27 +3701,23 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
       });
     });
     setLocal(rebuilt);
-    setDirty(true);
+    onSave({ entries: rebuilt, bilan, bilanAvant, niveaux: niveauxParExercice });
   };
 
   useEffect(() => {
     setNiveauxParExercice(session.niveaux || {});
-    setNiveauxDirty(false);
   }, [session.niveaux]);
 
   useEffect(() => {
     setLocal(session.entries);
-    setDirty(false);
   }, [session.entries]);
 
   useEffect(() => {
     setBilan(session.bilan || DEFAULT_BILAN);
-    setBilanDirty(false);
   }, [session.bilan]);
 
   useEffect(() => {
     setBilanAvant(session.bilanAvant || DEFAULT_BILAN_AVANT);
-    setBilanAvantDirty(false);
   }, [session.bilanAvant]);
 
   useEffect(() => {
@@ -3769,7 +3758,7 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
   const updateField = (idx, field, value) => {
     const copy = local.map((e, i) => (i === idx ? { ...e, [field]: value === "" ? null : Number(value) } : e));
     setLocal(copy);
-    setDirty(true);
+    onSave({ entries: copy, bilan, bilanAvant, niveaux: niveauxParExercice });
   };
 
   // Valide (ou dévalide) une série individuellement, et enregistre tout de
@@ -3792,23 +3781,27 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
       charge: template ? template.charge : null,
       validee: false,
     };
-    setLocal((prev) => [...prev, newEntry]);
-    setDirty(true);
+    const updated = [...local, newEntry];
+    setLocal(updated);
+    onSave({ entries: updated, bilan, bilanAvant, niveaux: niveauxParExercice });
   };
 
   const removeSerie = (exerciceId, serie) => {
-    setLocal((prev) => prev.filter((e) => !(e.exerciceId === exerciceId && e.serie === serie)));
-    setDirty(true);
+    const updated = local.filter((e) => !(e.exerciceId === exerciceId && e.serie === serie));
+    setLocal(updated);
+    onSave({ entries: updated, bilan, bilanAvant, niveaux: niveauxParExercice });
   };
 
   const updateBilan = (field, value) => {
-    setBilan((b) => ({ ...b, [field]: value }));
-    setBilanDirty(true);
+    const updated = { ...bilan, [field]: value };
+    setBilan(updated);
+    onSave({ entries: local, bilan: updated, bilanAvant, niveaux: niveauxParExercice });
   };
 
   const updateBilanAvant = (field, value) => {
-    setBilanAvant((b) => ({ ...b, [field]: value }));
-    setBilanAvantDirty(true);
+    const updated = { ...bilanAvant, [field]: value };
+    setBilanAvant(updated);
+    onSave({ entries: local, bilan, bilanAvant: updated, niveaux: niveauxParExercice });
   };
 
   const requestDelete = (e) => {
@@ -4091,8 +4084,9 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                                   key={lvl}
                                   type="button"
                                   onClick={() => {
-                                    setNiveauxParExercice((p) => ({ ...p, [exId]: lvl }));
-                                    setNiveauxDirty(true);
+                                    const updatedNiveaux = { ...niveauxParExercice, [exId]: lvl };
+                                    setNiveauxParExercice(updatedNiveaux);
+                                    onSave({ entries: local, bilan, bilanAvant, niveaux: updatedNiveaux });
                                   }}
                                   title={niv.nom}
                                   style={{
@@ -4357,21 +4351,9 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
 
           <SessionBilanForm bilan={bilan} onChange={updateBilan} role={role} />
 
-          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8, gap: 10 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8, gap: 10 }}>
             <button style={styles.dangerLinkBtn} onClick={() => setConfirmDelete(true)}>Supprimer la séance</button>
-            <button
-              style={{ ...styles.primaryBtn, opacity: (dirty || bilanDirty || bilanAvantDirty || niveauxDirty) ? 1 : 0.5 }}
-              disabled={!dirty && !bilanDirty && !bilanAvantDirty && !niveauxDirty}
-              onClick={() => {
-                onSave({ entries: local, bilan, bilanAvant, niveaux: niveauxParExercice });
-                setDirty(false);
-                setBilanDirty(false);
-                setBilanAvantDirty(false);
-                setNiveauxDirty(false);
-              }}
-            >
-              Enregistrer les modifications
-            </button>
+            <span style={{ fontSize: 11, color: COLORS.textFaint }}>Enregistré automatiquement</span>
           </div>
         </div>
       )}
