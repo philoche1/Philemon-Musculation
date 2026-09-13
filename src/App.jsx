@@ -3813,32 +3813,30 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
   return (
     <div style={styles.card}>
       <div style={styles.cardHeaderRow} onClick={onToggle}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, minWidth: 0 }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontFamily: FONT_DISPLAY, fontSize: 15, color: COLORS.text }}>
-              {session.seanceNom && <span style={{ color: COLORS.accent }}>{session.seanceNom} — </span>}
-              {formatDateFR(session.date)}
-            </div>
-            <div style={{ fontSize: 12, color: COLORS.textDim }}>
-              {exIds.length} exercice{exIds.length > 1 ? "s" : ""}
-              {programName && <span style={{ color: COLORS.accent2 }}> · {programName}</span>}
-              {isDistanciel && (
-                <span style={{ marginLeft: 6, fontSize: 11, padding: "2px 8px", borderRadius: 12, background: "rgba(255,176,102,0.14)", color: COLORS.accent2, fontWeight: 600 }}>
-                  Distanciel
-                </span>
-              )}
-            </div>
+        <button
+          style={{ ...styles.trashBtn, flexShrink: 0 }}
+          onClick={requestDelete}
+          title="Supprimer la séance"
+          aria-label="Supprimer la séance"
+        >
+          🗑️
+        </button>
+        <div style={{ flex: 1, minWidth: 0, marginLeft: 10 }}>
+          <div style={{ fontFamily: FONT_DISPLAY, fontSize: 15, color: COLORS.text }}>
+            {session.seanceNom && <span style={{ color: COLORS.accent }}>{session.seanceNom} — </span>}
+            {formatDateFR(session.date)}
           </div>
-          <button
-            style={styles.trashBtn}
-            onClick={requestDelete}
-            title="Supprimer la séance"
-            aria-label="Supprimer la séance"
-          >
-            🗑️
-          </button>
+          <div style={{ fontSize: 12, color: COLORS.textDim }}>
+            {exIds.length} exercice{exIds.length > 1 ? "s" : ""}
+            {programName && <span style={{ color: COLORS.accent2 }}> · {programName}</span>}
+            {isDistanciel && (
+              <span style={{ marginLeft: 6, fontSize: 11, padding: "2px 8px", borderRadius: 12, background: "rgba(255,176,102,0.14)", color: COLORS.accent2, fontWeight: 600 }}>
+                Distanciel
+              </span>
+            )}
+          </div>
         </div>
-        <span style={{ color: COLORS.textFaint, fontSize: 18, flexShrink: 0, marginLeft: 8 }}>{expanded ? "−" : "+"}</span>
+        <span style={{ color: COLORS.textFaint, fontSize: 18, flexShrink: 0, marginLeft: 12 }}>{expanded ? "−" : "+"}</span>
       </div>
 
       {confirmDelete && (
