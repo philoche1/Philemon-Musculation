@@ -649,6 +649,18 @@ const deleteProspect = useCallback(async (id) => {
   try { await window.storage.set(PROSPECTS_KEY, JSON.stringify(newList), true); } catch (e) {}
 }, [prospects]);
 
+// Recharge la liste des prospects depuis le serveur — utilisé après une
+// synchronisation des leads Meta, qui écrit directement en base côté
+// serveur (sans passer par le state local, contrairement aux autres actions).
+const refreshProspects = useCallback(async () => {
+  let pr = null;
+  try {
+    const r = await window.storage.get(PROSPECTS_KEY, true);
+    if (r && r.value) pr = JSON.parse(r.value);
+  } catch (e) {}
+  setProspects(pr || []);
+}, []);
+
    const loginClient = async (email, pin) => {
     const res = await fetch("/api/musculation-client-login", {
       method: "POST",
@@ -1095,6 +1107,7 @@ bookings={bookings}
                 onAdd={addProspect}
                 onMove={moveProspect}
                 onDelete={deleteProspect}
+                onRefresh={refreshProspects}
               />
             )}
           </>
@@ -2022,11 +2035,13 @@ function BilanCard({ bilan, onSave, onDelete, role }) {
   );
 }
 
-function ProspectsView({ prospects, prospectsLoaded, onAdd, onMove, onDelete }) {
+function ProspectsView({ prospects, prospectsLoaded, onAdd, onMove, onDelete, onRefresh }) {
   const [name, setName] = useState("");
   const [contact, setContact] = useState("");
   const [source, setSource] = useState("Pub Meta");
   const [notes, setNotes] = useState("");
+  const [syncing, setSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState(null);
 
   if (!prospectsLoaded) {
     return <div style={{ ...styles.emptyState, padding: "40px 0" }}>Chargement des prospects…</div>;
@@ -2040,9 +2055,46 @@ function ProspectsView({ prospects, prospectsLoaded, onAdd, onMove, onDelete }) 
     setNotes("");
   };
 
+  const syncMetaLeads = async () => {
+    setSyncing(true);
+    setSyncMessage(null);
+    try {
+      const res = await fetch("/api/sync-meta-leads", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${getCoachToken()}` },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setSyncMessage({ ok: false, text: data.error || "Erreur de synchronisation" });
+      } else {
+        setSyncMessage({
+          ok: true,
+          text: data.added > 0 ? `${data.added} nouveau${data.added > 1 ? "x" : ""} prospect${data.added > 1 ? "s" : ""} importé${data.added > 1 ? "s" : ""}` : "Aucun nouveau lead pour l'instant",
+        });
+        if (onRefresh) await onRefresh();
+      }
+    } catch (e) {
+      setSyncMessage({ ok: false, text: "Erreur réseau, réessaie" });
+    }
+    setSyncing(false);
+    setTimeout(() => setSyncMessage(null), 5000);
+  };
+
   return (
     <div>
-      <h2 style={styles.h2}>Prospects</h2>
+      <div style={styles.rowBetween}>
+        <h2 style={styles.h2}>Prospects</h2>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          {syncMessage && (
+            <span style={{ fontSize: 12, color: syncMessage.ok ? COLORS.accent2 : COLORS.danger }}>
+              {syncMessage.text}
+            </span>
+          )}
+          <button style={{ ...styles.secondaryBtn, opacity: syncing ? 0.6 : 1 }} onClick={syncMetaLeads} disabled={syncing}>
+            {syncing ? "Synchronisation…" : "🔄 Synchroniser les leads Meta"}
+          </button>
+        </div>
+      </div>
       <div style={{ ...styles.card, marginBottom: 20 }}>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
           <div style={{ minWidth: 140 }}>
