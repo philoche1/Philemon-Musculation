@@ -3182,6 +3182,25 @@ function getRestDuration(ex, serie) {
   return restDurationForSet(serie);
 }
 
+// Liste des durées de repos distinctes utilisées par un exercice sur ses
+// séries (dédupliquée, dans l'ordre) — sert à afficher un seul jeu de
+// chronos partagé pour l'exercice plutôt qu'un bouton par série.
+function distinctRestDurations(ex, seriesCount) {
+  const list = [];
+  for (let s = 1; s <= seriesCount; s++) {
+    const d = getRestDuration(ex, s);
+    if (!list.includes(d)) list.push(d);
+  }
+  return list;
+}
+
+function formatRestDuration(seconds) {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  if (s === 0) return `${m} min`;
+  return `${m}min${String(s).padStart(2, "0")}`;
+}
+
 function RestTimer({ duration: initialDuration }) {
   const [duration, setDuration] = useState(initialDuration);
   const [secondsLeft, setSecondsLeft] = useState(initialDuration);
@@ -3719,6 +3738,9 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
   const [openConsignes, setOpenConsignes] = useState({});
   const [openVideo, setOpenVideo] = useState({});
   const [openTimer, setOpenTimer] = useState({});
+  // Un seul chrono de repos actif à la fois par exercice (partagé entre
+  // toutes ses séries) : { [exId]: dureeEnSecondes } ou rien si fermé.
+  const [activeRest, setActiveRest] = useState({});
   const [niveauxParExercice, setNiveauxParExercice] = useState(session.niveaux || {});
   const [openNiveauConsignes, setOpenNiveauConsignes] = useState({});
   const [openNiveauVideo, setOpenNiveauVideo] = useState({});
@@ -4363,6 +4385,29 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                       );
                     })()}
                     <ExerciseNoteBox exId={realExId} notes={exerciseNotes} onSave={onSaveNote} isCoach={isCoach} />
+                    {showTimerBtn && (() => {
+                      const durations = distinctRestDurations(ex, Math.max(rows.length, 1));
+                      const active = activeRest[exId];
+                      return (
+                        <div style={{ marginBottom: 8 }}>
+                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                            {durations.map((d) => (
+                              <button
+                                key={d}
+                                type="button"
+                                style={{ ...styles.infoBtn, ...styles.infoBtnTimer, ...(active === d ? styles.infoBtnActive : {}) }}
+                                onClick={() => setActiveRest((p) => ({ ...p, [exId]: p[exId] === d ? null : d }))}
+                                title="Chrono de récupération"
+                                aria-label={`Chrono de récupération ${formatRestDuration(d)}`}
+                              >
+                                ⏱️ {formatRestDuration(d)}
+                              </button>
+                            ))}
+                          </div>
+                          {active != null && <RestTimer key={exId + "_" + active} duration={active} />}
+                        </div>
+                      );
+                    })()}
                     {(mobility || endSession) ? (
                       (showConsignesBtn || showVideoBtn) && (
                         <div style={styles.entryRow}>
@@ -4530,16 +4575,6 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                             ⏱️ Chrono
                           </button>
                         )}
-                        {showTimerBtn && (
-                          <button
-                            style={{ ...styles.infoBtn, ...styles.infoBtnTimer, ...(openTimer[timerKey] ? styles.infoBtnActive : {}) }}
-                            onClick={() => setOpenTimer((p) => ({ ...p, [timerKey]: !p[timerKey] }))}
-                            title="Chrono de récupération"
-                            aria-label="Chrono de récupération"
-                          >
-                            ⏱️ Repos
-                          </button>
-                        )}
                         {rIdx === 0 && showConsignesBtn && (
                           <button
                             style={{ ...styles.infoBtn, ...styles.infoBtnConsignes, ...(openConsignes[exId] ? styles.infoBtnActive : {}) }}
@@ -4613,7 +4648,7 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                           + Palier (drop-set)
                         </button>
                       )}
-                      {openTimer[timerKey] && (gainage ? <GainageTimer defaultDuration={60} /> : <RestTimer duration={getRestDuration(ex, row.serie)} />)}
+                      {gainage && openTimer[timerKey] && <GainageTimer defaultDuration={60} />}
                       </React.Fragment>
                       );
                     })}
