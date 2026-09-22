@@ -160,7 +160,7 @@ function getPreviousEntriesSameSeance(allSessions, seanceNom, excludeSessionId) 
   if (candidats.length === 0) return null;
   const map = {};
   candidats[0].s.entries.forEach((e) => {
-    map[e.exerciceId + "_" + e.serie] = { reps: e.reps, charge: e.charge };
+    map[e.exerciceId + "_" + e.serie] = { reps: e.reps, charge: e.charge, paliers: e.paliers };
   });
   return map;
 }
@@ -175,6 +175,7 @@ function applyPreviousEntries(entries, previousMap) {
       ...e,
       reps: prev && prev.reps != null ? prev.reps : e.reps,
       charge: prev && prev.charge != null ? prev.charge : e.charge,
+      paliers: prev && prev.paliers && prev.paliers.length ? prev.paliers.map((p) => ({ ...p })) : undefined,
       validee: false,
     };
   });
@@ -3887,6 +3888,50 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
     onSave({ entries: copy, bilan, bilanAvant, niveaux: niveauxParExercice });
   };
 
+  // Valide/dévalide en un clic toutes les séries des exercices d'une même
+  // zone (ex: tout le circuit d'échauffement), sans empêcher de continuer à
+  // cocher chaque série individuellement ensuite.
+  const allValidatedInZone = (zoneIds) => {
+    const idSet = new Set(zoneIds);
+    const relevant = local.filter((e) => idSet.has(groupKeyOf(e)));
+    return relevant.length > 0 && relevant.every((e) => e.validee);
+  };
+
+  const toggleAllInZone = (zoneIds) => {
+    const idSet = new Set(zoneIds);
+    const target = !allValidatedInZone(zoneIds);
+    const copy = local.map((e) => (idSet.has(groupKeyOf(e)) ? { ...e, validee: target } : e));
+    setLocal(copy);
+    onSave({ entries: copy, bilan, bilanAvant, niveaux: niveauxParExercice });
+  };
+
+  // Gestion des paliers de drop-set : des charges/répétitions supplémentaires
+  // enchaînées sans repos, rattachées à une même série.
+  const addPalier = (idx) => {
+    const copy = local.map((e, i) => (i === idx ? { ...e, paliers: [...(e.paliers || []), { reps: null, charge: null }] } : e));
+    setLocal(copy);
+    onSave({ entries: copy, bilan, bilanAvant, niveaux: niveauxParExercice });
+  };
+
+  const updatePalier = (idx, palierIdx, field, value) => {
+    const copy = local.map((e, i) => {
+      if (i !== idx) return e;
+      const paliers = (e.paliers || []).map((p, pi) => (pi === palierIdx ? { ...p, [field]: value === "" ? null : Number(value) } : p));
+      return { ...e, paliers };
+    });
+    setLocal(copy);
+    onSave({ entries: copy, bilan, bilanAvant, niveaux: niveauxParExercice });
+  };
+
+  const removePalier = (idx, palierIdx) => {
+    const copy = local.map((e, i) => {
+      if (i !== idx) return e;
+      return { ...e, paliers: (e.paliers || []).filter((_, pi) => pi !== palierIdx) };
+    });
+    setLocal(copy);
+    onSave({ entries: copy, bilan, bilanAvant, niveaux: niveauxParExercice });
+  };
+
   // Valide (ou dévalide) une série individuellement, et enregistre tout de
   // suite — indépendamment du bouton "Enregistrer les modifications" — pour
   // que rien ne soit perdu si la séance n'est jamais explicitement clôturée.
@@ -3990,8 +4035,19 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
               {idx === finHeaderIndex && (
                 <div style={styles.sectionHeader}>Fin de séance</div>
               )}
-              <div style={{ fontSize: 11, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8, paddingBottom: 4, borderBottom: `1px solid ${COLORS.cardBorder}` }}>
-                {label}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 11, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8, paddingBottom: 4, borderBottom: `1px solid ${COLORS.cardBorder}` }}>
+                <span>{label}</span>
+                {label === "Échauffement" && ids.length > 0 && (
+                  <label style={{ display: "flex", alignItems: "center", gap: 4, textTransform: "none", letterSpacing: 0, cursor: "pointer", fontSize: 11 }}>
+                    <input
+                      type="checkbox"
+                      checked={allValidatedInZone(ids)}
+                      onChange={() => toggleAllInZone(ids)}
+                      style={{ cursor: "pointer" }}
+                    />
+                    Tout valider
+                  </label>
+                )}
               </div>
               {label === "Échauffement" && ids.length > 0 && (() => {
                 const warmupRounds = Math.max(1, ...ids.map((id) => (grouped[id] ? grouped[id].length : WARMUP_SERIES_COUNT)));
@@ -4459,6 +4515,9 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                             Dernière fois : {prev.reps ?? "—"}
                             {warmup ? "s" : endSession ? " resp." : gainage ? "s" : " rép."}
                             {!endSession && !gainage && <> · {prev.charge ?? "—"} kg</>}
+                            {!endSession && !gainage && (prev.paliers || []).map((p, pi) => (
+                              <React.Fragment key={pi}> → {p.reps ?? "—"}×{p.charge ?? "—"}kg</React.Fragment>
+                            ))}
                           </span>
                         )}
                         {gainage && (
@@ -4502,6 +4561,58 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                           </button>
                         )}
                       </div>
+                      {!endSession && !gainage && (row.paliers || []).map((p, pi) => (
+                        <div key={pi} style={{ ...styles.entryRow, marginTop: 2, marginLeft: 20 }}>
+                          <span style={{ ...styles.entryLabel, fontSize: 11, color: COLORS.textFaint }}>↳ palier {pi + 2}</span>
+                          <button
+                            type="button"
+                            onClick={() => removePalier(row._idx, pi)}
+                            title="Retirer ce palier"
+                            aria-label="Retirer ce palier"
+                            style={{
+                              width: 20,
+                              height: 20,
+                              borderRadius: 5,
+                              border: `1px solid ${COLORS.cardBorder}`,
+                              background: COLORS.bg2,
+                              color: COLORS.textFaint,
+                              fontSize: 10,
+                              cursor: "pointer",
+                              flexShrink: 0,
+                              padding: 0,
+                            }}
+                          >
+                            ✕
+                          </button>
+                          <input
+                            type="number"
+                            value={p.reps ?? ""}
+                            onFocus={(e) => e.target.select()}
+                            onChange={(e) => updatePalier(row._idx, pi, "reps", e.target.value)}
+                            placeholder="Rép."
+                            style={styles.numInput}
+                          />
+                          <span style={styles.unitLabel}>rep</span>
+                          <input
+                            type="number"
+                            value={p.charge ?? ""}
+                            onFocus={(e) => e.target.select()}
+                            onChange={(e) => updatePalier(row._idx, pi, "charge", e.target.value)}
+                            placeholder="Kg"
+                            style={styles.numInput}
+                          />
+                          <span style={styles.unitLabel}>kg</span>
+                        </div>
+                      ))}
+                      {!endSession && !gainage && (
+                        <button
+                          type="button"
+                          style={{ ...styles.linkBtn, fontSize: 10, marginLeft: 20, marginTop: 2, marginBottom: 4 }}
+                          onClick={() => addPalier(row._idx)}
+                        >
+                          + Palier (drop-set)
+                        </button>
+                      )}
                       {openTimer[timerKey] && (gainage ? <GainageTimer defaultDuration={60} /> : <RestTimer duration={getRestDuration(ex, row.serie)} />)}
                       </React.Fragment>
                       );
@@ -5614,7 +5725,7 @@ function ExerciseNoteBox({ exId, notes, onSave, isCoach }) {
         fontFamily: FONT_BODY,
         color: COLORS.textDim,
         background: COLORS.bg2,
-        border: `1px dashed ${COLORS.cardBorder}`,
+        border: `1px solid ${COLORS.cardBorder}`,
         borderRadius: 6,
       }}
     />
