@@ -3182,16 +3182,41 @@ function getRestDuration(ex, serie) {
   return restDurationForSet(serie);
 }
 
-// Liste des durées de repos distinctes utilisées par un exercice sur ses
-// séries (dédupliquée, dans l'ordre) — sert à afficher un seul jeu de
-// chronos partagé pour l'exercice plutôt qu'un bouton par série.
-function distinctRestDurations(ex, seriesCount) {
-  const list = [];
+// Regroupe les séries d'un exercice par durée de repos identique (ex: Set 1
+// → 1min, Set 2-3 → 1min30), pour afficher un seul jeu de chronos partagé
+// tout en indiquant clairement quelle série utilise quel chrono — utile en
+// particulier pour le client en autonomie (distanciel).
+function restDurationGroups(ex, seriesCount) {
+  const groups = [];
   for (let s = 1; s <= seriesCount; s++) {
     const d = getRestDuration(ex, s);
-    if (!list.includes(d)) list.push(d);
+    let g = groups.find((g) => g.duration === d);
+    if (!g) {
+      g = { duration: d, series: [] };
+      groups.push(g);
+    }
+    g.series.push(s);
   }
-  return list;
+  return groups;
+}
+
+// Formate une liste de numéros de série croissants en plages compactes
+// ("1", "2-3", "1,4-5"...).
+function formatSeriesList(nums) {
+  const ranges = [];
+  let start = nums[0];
+  let prev = nums[0];
+  for (let i = 1; i <= nums.length; i++) {
+    const n = nums[i];
+    if (n === prev + 1) {
+      prev = n;
+      continue;
+    }
+    ranges.push(start === prev ? `${start}` : `${start}-${prev}`);
+    start = n;
+    prev = n;
+  }
+  return ranges.join(",");
 }
 
 function formatRestDuration(seconds) {
@@ -4386,21 +4411,21 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                     })()}
                     <ExerciseNoteBox exId={realExId} notes={exerciseNotes} onSave={onSaveNote} isCoach={isCoach} />
                     {showTimerBtn && (() => {
-                      const durations = distinctRestDurations(ex, Math.max(rows.length, 1));
+                      const groups = restDurationGroups(ex, Math.max(rows.length, 1));
                       const active = activeRest[exId];
                       return (
                         <div style={{ marginBottom: 8 }}>
                           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                            {durations.map((d) => (
+                            {groups.map((g) => (
                               <button
-                                key={d}
+                                key={g.duration}
                                 type="button"
-                                style={{ ...styles.infoBtn, ...styles.infoBtnTimer, ...(active === d ? styles.infoBtnActive : {}) }}
-                                onClick={() => setActiveRest((p) => ({ ...p, [exId]: p[exId] === d ? null : d }))}
+                                style={{ ...styles.infoBtn, ...styles.infoBtnTimer, ...(active === g.duration ? styles.infoBtnActive : {}) }}
+                                onClick={() => setActiveRest((p) => ({ ...p, [exId]: p[exId] === g.duration ? null : g.duration }))}
                                 title="Chrono de récupération"
-                                aria-label={`Chrono de récupération ${formatRestDuration(d)}`}
+                                aria-label={`Chrono de récupération Set ${formatSeriesList(g.series)} · ${formatRestDuration(g.duration)}`}
                               >
-                                ⏱️ {formatRestDuration(d)}
+                                ⏱️ Set {formatSeriesList(g.series)} · {formatRestDuration(g.duration)}
                               </button>
                             ))}
                           </div>
