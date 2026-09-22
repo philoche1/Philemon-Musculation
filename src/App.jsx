@@ -3166,8 +3166,8 @@ function playBeep(count = 2, toneDuration = 0.3) {
 
 function restDurationForSet(serie) {
   if (serie === 1) return 60;
-  if (serie === 2) return 90;
-  return 120;
+  if (serie === 2) return 75;
+  return 90;
 }
 
 // Utilise le temps de repos personnalisé de l'exercice s'il existe (défini
@@ -4415,17 +4415,27 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                       const active = activeRest[exId];
                       return (
                         <div style={{ marginBottom: 8 }}>
-                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                          <div style={{ display: "flex", gap: 4, flexWrap: "nowrap" }}>
                             {groups.map((g) => (
                               <button
                                 key={g.duration}
                                 type="button"
-                                style={{ ...styles.infoBtn, ...styles.infoBtnTimer, ...(active === g.duration ? styles.infoBtnActive : {}) }}
+                                style={{
+                                  ...styles.infoBtn,
+                                  ...styles.infoBtnTimer,
+                                  ...(active === g.duration ? styles.infoBtnActive : {}),
+                                  flex: 1,
+                                  minWidth: 0,
+                                  padding: "6px 4px",
+                                  whiteSpace: "nowrap",
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                }}
                                 onClick={() => setActiveRest((p) => ({ ...p, [exId]: p[exId] === g.duration ? null : g.duration }))}
-                                title="Chrono de récupération"
+                                title={`Chrono de récupération · ${formatRestDuration(g.duration)}`}
                                 aria-label={`Chrono de récupération Set ${formatSeriesList(g.series)} · ${formatRestDuration(g.duration)}`}
                               >
-                                ⏱️ Set {formatSeriesList(g.series)} · {formatRestDuration(g.duration)}
+                                ⏱️ Set {formatSeriesList(g.series)}
                               </button>
                             ))}
                           </div>
