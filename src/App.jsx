@@ -3772,7 +3772,44 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
   const [swappingExId, setSwappingExId] = useState(null);
   const [swapSearch, setSwapSearch] = useState("");
   const [addingAnchorExId, setAddingAnchorExId] = useState(null);
+  const [linkingExId, setLinkingExId] = useState(null);
   const isCoach = role === "coach";
+
+  // Lie deux exercices en superset/biset : ils partagent le même id de
+  // groupe (entry.superset). Si l'un des deux appartient déjà à un groupe,
+  // l'autre le rejoint (permet des trisets en liant un 3e exercice à un des
+  // deux premiers).
+  const linkExercises = (groupKeyA, groupKeyB) => {
+    const rowsA = local.filter((e) => groupKeyOf(e) === groupKeyA);
+    const rowsB = local.filter((e) => groupKeyOf(e) === groupKeyB);
+    if (!rowsA.length || !rowsB.length) {
+      setLinkingExId(null);
+      return;
+    }
+    const existingId = rowsA[0].superset || rowsB[0].superset;
+    const supersetId = existingId || uid("sg");
+    const groupKeysToTag = new Set([groupKeyA, groupKeyB]);
+    // Si l'exercice B appartenait déjà à un autre groupe, on rattache tout
+    // ce groupe au même id pour fusionner proprement.
+    if (rowsB[0].superset && rowsB[0].superset !== supersetId) {
+      local.forEach((e) => { if (e.superset === rowsB[0].superset) groupKeysToTag.add(groupKeyOf(e)); });
+    }
+    if (rowsA[0].superset && rowsA[0].superset !== supersetId) {
+      local.forEach((e) => { if (e.superset === rowsA[0].superset) groupKeysToTag.add(groupKeyOf(e)); });
+    }
+    const copy = local.map((e) => (groupKeysToTag.has(groupKeyOf(e)) ? { ...e, superset: supersetId } : e));
+    setLocal(copy);
+    onSave({ entries: copy, bilan, bilanAvant, niveaux: niveauxParExercice });
+    setLinkingExId(null);
+  };
+
+  // Retire uniquement cet exercice de son groupe superset/biset (les autres
+  // membres restent liés entre eux).
+  const unlinkExercise = (groupKey) => {
+    const copy = local.map((e) => (groupKeyOf(e) === groupKey ? { ...e, superset: null } : e));
+    setLocal(copy);
+    onSave({ entries: copy, bilan, bilanAvant, niveaux: niveauxParExercice });
+  };
 
   // oldGroupKey identifie le bloc à remplacer (id d'exercice, ou id__instance
   // s'il s'agit d'un exercice dupliqué) ; newExId est l'id du nouvel exercice,
@@ -3826,7 +3863,7 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
       .map((e) => e.instance || 0);
     const nextInstance = Math.max(0, ...existingInstances) + 1;
     const newRows = rows.map((e) => {
-      const { _idx, ...rest } = e;
+      const { _idx, superset, ...rest } = e;
       return { ...rest, instance: nextInstance, validee: false };
     });
     const updated = [...local, ...newRows];
@@ -3907,6 +3944,36 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
   const debutHeaderIndex = zoneGroups.findIndex(([label]) => DEBUT_DE_SEANCE_ZONES.includes(label));
   const corpsHeaderIndex = zoneGroups.findIndex(([label]) => CORPS_DE_SEANCE_ZONES.includes(label));
   const finHeaderIndex = zoneGroups.findIndex(([label]) => FIN_DE_SEANCE_ZONES.includes(label));
+
+  // Groupes superset/biset actuellement valides (au moins 2 exercices
+  // distincts encore présents dans la séance), avec une lettre A/B/C... pour
+  // les distinguer visuellement s'il y en a plusieurs dans la même séance.
+  const supersetGroupsMap = useMemo(() => {
+    const map = {};
+    local.forEach((e) => {
+      if (!e.superset) return;
+      const gk = groupKeyOf(e);
+      if (!map[e.superset]) map[e.superset] = new Set();
+      map[e.superset].add(gk);
+    });
+    const valid = {};
+    Object.entries(map).forEach(([sid, set]) => {
+      if (set.size >= 2) valid[sid] = set;
+    });
+    return valid;
+  }, [local]);
+  const supersetLabels = useMemo(() => {
+    const labels = {};
+    Object.keys(supersetGroupsMap).forEach((sid, i) => {
+      labels[sid] = String.fromCharCode(65 + (i % 26));
+    });
+    return labels;
+  }, [supersetGroupsMap]);
+  const SUPERSET_COLORS = ["#FF6400", "#3B82F6", "#22C55E", "#A855F7", "#EAB308"];
+  const supersetColor = (sid) => {
+    const idx = Object.keys(supersetGroupsMap).indexOf(sid);
+    return SUPERSET_COLORS[idx % SUPERSET_COLORS.length];
+  };
 
   const previousValues = useMemo(() => {
     const earlierSessions = (allSessions || [])
@@ -4129,9 +4196,10 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                 const cardio = isCardioExercise(ex);
                 const gainage = isGainageExercise(ex);
                 const showTimerBtn = ex && getExerciseZones(ex).some((z) => zoneLabel(z) === "BAS DU CORPS" || zoneLabel(z) === "HAUT DU CORPS");
+                const mySupersetId = rows[0] && rows[0].superset && supersetGroupsMap[rows[0].superset] ? rows[0].superset : null;
                 return (
-                  <div key={exId} style={{ marginBottom: 14 }}>
-                    <div style={{ fontSize: 13, color: COLORS.accent2, marginBottom: 6, fontFamily: FONT_BODY, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
+                  <div key={exId} style={{ marginBottom: 14, ...(mySupersetId ? { borderLeft: `3px solid ${supersetColor(mySupersetId)}`, paddingLeft: 8 } : {}) }}>
+                    <div style={{ fontSize: 13, color: COLORS.accent2, marginBottom: 6, fontFamily: FONT_BODY, fontWeight: 600, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                       {isCoach ? (
                         <button
                           type="button"
@@ -4146,6 +4214,20 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                       )}
                       {warmup && <span style={{ color: COLORS.textFaint, fontWeight: 400, fontSize: 11 }}> — temps en secondes</span>}
                       {gainage && <span style={{ color: COLORS.textFaint, fontWeight: 400, fontSize: 11 }}> — temps d'effort en secondes</span>}
+                      {mySupersetId && (
+                        <span
+                          style={{
+                            fontSize: 10,
+                            fontWeight: 700,
+                            padding: "2px 7px",
+                            borderRadius: 10,
+                            color: "#fff",
+                            background: supersetColor(mySupersetId),
+                          }}
+                        >
+                          🔗 Superset {supersetLabels[mySupersetId]}
+                        </span>
+                      )}
                       {isCoach && (
                         <button
                           type="button"
@@ -4215,6 +4297,29 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                           }}
                         >
                           ⧉
+                        </button>
+                      )}
+                      {isCoach && (
+                        <button
+                          type="button"
+                          onClick={() => (mySupersetId ? unlinkExercise(exId) : setLinkingExId(linkingExId === exId ? null : exId))}
+                          title={mySupersetId ? "Délier du superset" : "Lier à un autre exercice (superset/biset)"}
+                          aria-label={mySupersetId ? "Délier du superset" : "Lier à un autre exercice"}
+                          style={{
+                            width: 20,
+                            height: 20,
+                            borderRadius: 6,
+                            border: `1px solid ${COLORS.cardBorder}`,
+                            background: linkingExId === exId ? COLORS.accent : COLORS.bg2,
+                            color: linkingExId === exId ? COLORS.bg : COLORS.textFaint,
+                            fontSize: 11,
+                            cursor: "pointer",
+                            flexShrink: 0,
+                            padding: 0,
+                            lineHeight: 1,
+                          }}
+                        >
+                          {mySupersetId ? "🔓" : "🔗"}
                         </button>
                       )}
                       {isCoach && (
@@ -4312,6 +4417,34 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                             )}
                           </div>
                           <button type="button" style={{ ...styles.linkBtn, marginTop: 8 }} onClick={() => { setSwappingExId(null); setSwapSearch(""); }}>Annuler</button>
+                        </div>
+                      );
+                    })()}
+                    {isCoach && linkingExId === exId && (() => {
+                      const autresExercices = exIds
+                        .filter((k) => k !== exId)
+                        .map((k) => ({ key: k, name: exDisplayName(exercisesAliased[k]) }));
+                      return (
+                        <div style={{ ...styles.consignesPanel, marginBottom: 10 }}>
+                          <div style={{ fontSize: 11, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>
+                            Lier en superset/biset avec...
+                          </div>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 220, overflowY: "auto" }}>
+                            {autresExercices.map((cand) => (
+                              <button
+                                key={cand.key}
+                                type="button"
+                                onClick={() => linkExercises(exId, cand.key)}
+                                style={{ ...styles.secondaryBtn, textAlign: "left", padding: "6px 10px" }}
+                              >
+                                {cand.name}
+                              </button>
+                            ))}
+                            {autresExercices.length === 0 && (
+                              <div style={{ fontSize: 12, color: COLORS.textFaint }}>Aucun autre exercice dans cette séance.</div>
+                            )}
+                          </div>
+                          <button type="button" style={{ ...styles.linkBtn, marginTop: 8 }} onClick={() => setLinkingExId(null)}>Annuler</button>
                         </div>
                       );
                     })()}
