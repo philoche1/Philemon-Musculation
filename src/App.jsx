@@ -1847,7 +1847,7 @@ function PalierFrise({ palierActuel }) {
 
 // Zone de texte qui se resserre quand elle est vide et s'agrandit
 // automatiquement au fur et à mesure du texte saisi (au lieu d'une hauteur fixe).
-function AutoGrowTextarea({ value, onChange, style }) {
+function AutoGrowTextarea({ value, onChange, style, ...rest }) {
   const ref = useRef(null);
 
   useEffect(() => {
@@ -1864,6 +1864,7 @@ function AutoGrowTextarea({ value, onChange, style }) {
       onChange={onChange}
       rows={1}
       style={{ ...style, overflow: "hidden", resize: "none" }}
+      {...rest}
     />
   );
 }
@@ -2852,10 +2853,33 @@ function SuiviView({ data, persistSessions, role, activeClient, deleteProgrammeH
   const [expanded, setExpanded] = useState(null);
   const [showNew, setShowNew] = useState(false);
   const [quickDate, setQuickDate] = useState(todayISO());
+  const [exerciseNotes, setExerciseNotes] = useState({});
   const sessionsSorted = useMemo(
     () => [...data.sessions].sort((a, b) => (a.date < b.date ? 1 : -1)),
     [data.sessions]
   );
+
+  useEffect(() => {
+    if (!activeClient) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await window.storage.get(exerciseNotesKey(activeClient.id), true);
+        if (!cancelled) setExerciseNotes(r ? JSON.parse(r) : {});
+      } catch (e) {
+        if (!cancelled) setExerciseNotes({});
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [activeClient && activeClient.id]);
+
+  const saveExerciseNote = async (exId, text) => {
+    const updated = { ...exerciseNotes, [exId]: text };
+    setExerciseNotes(updated);
+    if (activeClient) {
+      await window.storage.set(exerciseNotesKey(activeClient.id), JSON.stringify(updated), true);
+    }
+  };
 
   const updateSession = (sessionId, updates) => {
     const newSessions = data.sessions.map((s) => (s.id === sessionId ? { ...s, ...updates } : s));
@@ -3089,6 +3113,8 @@ function SuiviView({ data, persistSessions, role, activeClient, deleteProgrammeH
             programName={programNameForSeance(session.seanceNom)}
             isDistanciel={isDistancielSeance(session.seanceNom)}
             role={role}
+            exerciseNotes={exerciseNotes}
+            onSaveNote={saveExerciseNote}
             expanded={expanded === session.id}
             onToggle={() => setExpanded(expanded === session.id ? null : session.id)}
             onExpand={() => setExpanded(session.id)}
@@ -3664,11 +3690,19 @@ function CircuitTimer({
   );
 }
 
+// Clé de regroupement d'une entrée : l'id d'exercice seul, ou suffixé par son
+// "instance" si l'exercice a été dupliqué dans la même séance (ex: pour faire
+// le même exercice une fois en bilatéral et une fois en unilatéral).
+function groupKeyOf(e) {
+  return e.exerciceId + (e.instance ? "__" + e.instance : "");
+}
+
 function groupBySeries(entries) {
   const byEx = {};
   entries.forEach((e, idx) => {
-    if (!byEx[e.exerciceId]) byEx[e.exerciceId] = [];
-    byEx[e.exerciceId].push({ ...e, _idx: idx });
+    const key = groupKeyOf(e);
+    if (!byEx[key]) byEx[key] = [];
+    byEx[key].push({ ...e, _idx: idx });
   });
   return byEx;
 }
@@ -3676,7 +3710,7 @@ function groupBySeries(entries) {
 const DEFAULT_BILAN = { difficulte: null, sensation: null, douleur: "", remarque: "" };
 const DEFAULT_BILAN_AVANT = { forme: null, sommeil: null, alimentation: null, douleur: "", remarque: "" };
 
-function SessionCard({ session, exercises, allSessions, programName, isDistanciel, role, expanded, onToggle, onExpand, onSave, onDelete }) {
+function SessionCard({ session, exercises, allSessions, programName, isDistanciel, role, exerciseNotes, onSaveNote, expanded, onToggle, onExpand, onSave, onDelete }) {
   const [local, setLocal] = useState(session.entries);
   const [bilan, setBilan] = useState(session.bilan || DEFAULT_BILAN);
   const [bilanAvant, setBilanAvant] = useState(session.bilanAvant || DEFAULT_BILAN_AVANT);
@@ -3688,24 +3722,36 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
   const [openNiveauConsignes, setOpenNiveauConsignes] = useState({});
   const [openNiveauVideo, setOpenNiveauVideo] = useState({});
   const [swappingExId, setSwappingExId] = useState(null);
+  const [swapSearch, setSwapSearch] = useState("");
   const [addingAnchorExId, setAddingAnchorExId] = useState(null);
   const isCoach = role === "coach";
 
-  const swapExercise = (oldExId, newExId) => {
-    if (oldExId === newExId) {
+  // oldGroupKey identifie le bloc à remplacer (id d'exercice, ou id__instance
+  // s'il s'agit d'un exercice dupliqué) ; newExId est l'id du nouvel exercice,
+  // choisi librement dans tout le catalogue, quelle que soit sa zone.
+  const swapExercise = (oldGroupKey, newExId) => {
+    const oldRows = local.filter((e) => groupKeyOf(e) === oldGroupKey);
+    if (!oldRows.length) {
       setSwappingExId(null);
       return;
     }
-    const copy = local.map((e) => (e.exerciceId === oldExId ? { ...e, exerciceId: newExId } : e));
+    if (oldRows[0].exerciceId === newExId) {
+      setSwappingExId(null);
+      return;
+    }
+    const instance = oldRows[0].instance;
+    const newGroupKey = newExId + (instance ? "__" + instance : "");
+    const copy = local.map((e) => (groupKeyOf(e) === oldGroupKey ? { ...e, exerciceId: newExId } : e));
     const newNiveaux = { ...niveauxParExercice };
-    if (newNiveaux[oldExId] != null) {
-      newNiveaux[newExId] = newNiveaux[oldExId];
-      delete newNiveaux[oldExId];
+    if (newNiveaux[oldGroupKey] != null) {
+      newNiveaux[newGroupKey] = newNiveaux[oldGroupKey];
+      delete newNiveaux[oldGroupKey];
     }
     setLocal(copy);
     setNiveauxParExercice(newNiveaux);
     onSave({ entries: copy, bilan, bilanAvant, niveaux: newNiveaux });
     setSwappingExId(null);
+    setSwapSearch("");
   };
 
   // Ajoute un nouvel exercice (de la même zone) à la séance, avec ses séries
@@ -3720,12 +3766,32 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
     setAddingAnchorExId(null);
   };
 
+  // Duplique un exercice déjà présent dans la séance (même séries, mêmes
+  // valeurs) comme un second bloc indépendant — utile par exemple pour faire
+  // le même exercice une fois en bilatéral, une fois en unilatéral.
+  const duplicateExercise = (groupKey) => {
+    const rows = local.filter((e) => groupKeyOf(e) === groupKey);
+    if (!rows.length) return;
+    const realId = rows[0].exerciceId;
+    const existingInstances = local
+      .filter((e) => e.exerciceId === realId)
+      .map((e) => e.instance || 0);
+    const nextInstance = Math.max(0, ...existingInstances) + 1;
+    const newRows = rows.map((e) => {
+      const { _idx, ...rest } = e;
+      return { ...rest, instance: nextInstance, validee: false };
+    });
+    const updated = [...local, ...newRows];
+    setLocal(updated);
+    onSave({ entries: updated, bilan, bilanAvant, niveaux: niveauxParExercice });
+  };
+
   // Retire complètement un exercice (et toutes ses séries) de la séance.
-  const removeExerciseFromSession = (exId) => {
+  const removeExerciseFromSession = (groupKey) => {
     if (!window.confirm("Retirer cet exercice (et toutes ses séries) de la séance ?")) return;
-    const updated = local.filter((e) => e.exerciceId !== exId);
+    const updated = local.filter((e) => groupKeyOf(e) !== groupKey);
     const newNiveaux = { ...niveauxParExercice };
-    delete newNiveaux[exId];
+    delete newNiveaux[groupKey];
     setLocal(updated);
     setNiveauxParExercice(newNiveaux);
     onSave({ entries: updated, bilan, bilanAvant, niveaux: newNiveaux });
@@ -3778,7 +3844,15 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
 
   const grouped = groupBySeries(local);
   const exIds = Object.keys(grouped);
-  const zoneGroups = groupExIdsByZone(exIds, exercises);
+  // Table alias id-de-groupe → exercice réel, pour que les exercices dupliqués
+  // (clé "id__instance") continuent de résoudre vers le bon exercice partout
+  // où on fait exercises[uneClé] (zone, nom, niveaux, timers...).
+  const exercisesAliased = { ...exercises };
+  exIds.forEach((key) => {
+    const realId = grouped[key][0].exerciceId;
+    if (key !== realId) exercisesAliased[key] = exercises[realId];
+  });
+  const zoneGroups = groupExIdsByZone(exIds, exercisesAliased);
   const CORPS_DE_SEANCE_ZONES = ["BAS DU CORPS", "HAUT DU CORPS", "CENTRE DU CORPS"];
   const FIN_DE_SEANCE_ZONES = ["Cardio", "Étirements"];
   const DEBUT_DE_SEANCE_ZONES = ["Mobilité", "Échauffement"];
@@ -3822,12 +3896,13 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
     onSave({ entries: copy, bilan, bilanAvant, niveaux: niveauxParExercice });
   };
 
-  const addSerie = (exerciceId) => {
-    const rowsForEx = local.filter((e) => e.exerciceId === exerciceId);
+  const addSerie = (groupKey) => {
+    const rowsForEx = local.filter((e) => groupKeyOf(e) === groupKey);
     const maxSerie = rowsForEx.length ? Math.max(...rowsForEx.map((e) => e.serie)) : 0;
     const template = rowsForEx[rowsForEx.length - 1];
     const newEntry = {
-      exerciceId,
+      exerciceId: template ? template.exerciceId : groupKey,
+      instance: template ? template.instance : undefined,
       serie: maxSerie + 1,
       reps: template ? template.reps : null,
       charge: template ? template.charge : null,
@@ -3838,8 +3913,8 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
     onSave({ entries: updated, bilan, bilanAvant, niveaux: niveauxParExercice });
   };
 
-  const removeSerie = (exerciceId, serie) => {
-    const updated = local.filter((e) => !(e.exerciceId === exerciceId && e.serie === serie));
+  const removeSerie = (groupKey, serie) => {
+    const updated = local.filter((e) => !(groupKeyOf(e) === groupKey && e.serie === serie));
     setLocal(updated);
     onSave({ entries: updated, bilan, bilanAvant, niveaux: niveauxParExercice });
   };
@@ -3924,7 +3999,7 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                   <CircuitTimer
                     key={ids.join(",") + "_" + warmupRounds}
                     defaultRounds={warmupRounds}
-                    exerciseNames={ids.map((id) => (exercises[id] ? exercises[id].nom.replace(/\n/g, " ") : "Exercice"))}
+                    exerciseNames={ids.map((id) => (exercisesAliased[id] ? exercisesAliased[id].nom.replace(/\n/g, " ") : "Exercice"))}
                   />
                 );
               })()}
@@ -3936,11 +4011,12 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                   defaultRest={CARDIO_REST_SECONDS}
                   defaultRoundRest={CARDIO_ROUND_REST_SECONDS}
                   workInMinutes
-                  exerciseNames={ids.map((id) => (exercises[id] ? exercises[id].nom.replace(/\n/g, " ") : "Exercice"))}
+                  exerciseNames={ids.map((id) => (exercisesAliased[id] ? exercisesAliased[id].nom.replace(/\n/g, " ") : "Exercice"))}
                 />
               )}
               {ids.map((exId) => {
-                const ex = exercises[exId];
+                const realExId = grouped[exId][0].exerciceId;
+                const ex = exercisesAliased[exId];
                 const rows = grouped[exId];
                 const showConsignesBtn = ex && hasConsignes(ex);
                 const showVideoBtn = ex && ex.videoUrl;
@@ -4016,6 +4092,29 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                         </button>
                       )}
                       {isCoach && (
+                        <button
+                          type="button"
+                          onClick={() => duplicateExercise(exId)}
+                          title="Dupliquer cet exercice (ex: bilatéral + unilatéral)"
+                          aria-label="Dupliquer cet exercice"
+                          style={{
+                            width: 20,
+                            height: 20,
+                            borderRadius: 6,
+                            border: `1px solid ${COLORS.cardBorder}`,
+                            background: COLORS.bg2,
+                            color: COLORS.textFaint,
+                            fontSize: 11,
+                            cursor: "pointer",
+                            flexShrink: 0,
+                            padding: 0,
+                            lineHeight: 1,
+                          }}
+                        >
+                          ⧉
+                        </button>
+                      )}
+                      {isCoach && (
                         <span style={{ display: "flex", gap: 2, marginLeft: 4 }}>
                           <button
                             type="button"
@@ -4064,31 +4163,55 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                         </span>
                       )}
                     </div>
-                    {isCoach && swappingExId === exId && (
-                      <div style={{ ...styles.consignesPanel, marginBottom: 10 }}>
-                        <div style={{ fontSize: 11, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>
-                          Remplacer par un exercice de la zone "{label}"
-                        </div>
-                        <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 220, overflowY: "auto" }}>
-                          {Object.values(exercises)
-                            .filter((cand) => cand.id !== exId && getExerciseZones(cand).some((z) => zoneLabel(z) === label))
-                            .map((cand) => (
-                              <button
-                                key={cand.id}
-                                type="button"
-                                onClick={() => swapExercise(exId, cand.id)}
-                                style={{ ...styles.secondaryBtn, textAlign: "left", padding: "6px 10px" }}
-                              >
-                                {exDisplayName(cand)}
-                              </button>
+                    {isCoach && swappingExId === exId && (() => {
+                      const search = swapSearch.trim().toLowerCase();
+                      const candidatsParZone = groupExIdsByZoneMulti(
+                        Object.keys(exercises).filter(
+                          (id) => id !== realExId && (!search || exDisplayName(exercises[id]).toLowerCase().includes(search))
+                        ),
+                        exercises
+                      );
+                      const total = candidatsParZone.reduce((n, [, zids]) => n + zids.length, 0);
+                      return (
+                        <div style={{ ...styles.consignesPanel, marginBottom: 10 }}>
+                          <div style={{ fontSize: 11, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>
+                            Remplacer par n'importe quel exercice
+                          </div>
+                          <input
+                            type="text"
+                            value={swapSearch}
+                            onChange={(e) => setSwapSearch(e.target.value)}
+                            placeholder="Rechercher un exercice..."
+                            style={{ ...styles.textInput, marginBottom: 8 }}
+                          />
+                          <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 280, overflowY: "auto" }}>
+                            {candidatsParZone.map(([zLabel, zIds]) => (
+                              <div key={zLabel}>
+                                <div style={{ fontSize: 10, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>
+                                  {zLabel}
+                                </div>
+                                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                                  {zIds.map((id) => (
+                                    <button
+                                      key={id}
+                                      type="button"
+                                      onClick={() => swapExercise(exId, id)}
+                                      style={{ ...styles.secondaryBtn, textAlign: "left", padding: "6px 10px" }}
+                                    >
+                                      {exDisplayName(exercises[id])}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
                             ))}
-                          {Object.values(exercises).filter((cand) => cand.id !== exId && getExerciseZones(cand).some((z) => zoneLabel(z) === label)).length === 0 && (
-                            <div style={{ fontSize: 12, color: COLORS.textFaint }}>Aucun autre exercice dans cette zone.</div>
-                          )}
+                            {total === 0 && (
+                              <div style={{ fontSize: 12, color: COLORS.textFaint }}>Aucun exercice ne correspond.</div>
+                            )}
+                          </div>
+                          <button type="button" style={{ ...styles.linkBtn, marginTop: 8 }} onClick={() => { setSwappingExId(null); setSwapSearch(""); }}>Annuler</button>
                         </div>
-                        <button type="button" style={{ ...styles.linkBtn, marginTop: 8 }} onClick={() => setSwappingExId(null)}>Annuler</button>
-                      </div>
-                    )}
+                      );
+                    })()}
                     {isCoach && addingAnchorExId === exId && (() => {
                       const idsDejaPresents = new Set(local.map((e) => e.exerciceId));
                       const candidats = Object.values(exercises).filter(
@@ -4183,6 +4306,7 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                         </div>
                       );
                     })()}
+                    <ExerciseNoteBox exId={realExId} notes={exerciseNotes} onSave={onSaveNote} isCoach={isCoach} />
                     {(mobility || endSession) ? (
                       (showConsignesBtn || showVideoBtn) && (
                         <div style={styles.entryRow}>
@@ -4273,7 +4397,7 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                     ) : (
                     <>
                     {rows.map((row, rIdx) => {
-                      const prev = previousValues[exId + "_" + row.serie];
+                      const prev = previousValues[row.exerciceId + "_" + row.serie];
                       const timerKey = exId + "_" + row.serie;
                       return (
                       <React.Fragment key={row._idx}>
@@ -5456,6 +5580,46 @@ function CTTableView({ clientId, role, data, persistLibrary }) {
 const photoJournalKey = (clientId) => `photo-journal-v1-${clientId}`;
 const hydrationKey = (clientId) => `hydration-v1-${clientId}`;
 const documentsKey = (clientId) => `documents-v1-${clientId}`;
+const exerciseNotesKey = (clientId) => `exercise-notes-v1-${clientId}`;
+
+// Petit cadre texte affiché sous chaque exercice (placements, réglages
+// machine...). Une note par exercice, propre à ce client, qui reste
+// affichée à chaque fois que l'exercice revient dans une séance. Modifiable
+// par le coach uniquement ; le client la voit en lecture seule.
+function ExerciseNoteBox({ exId, notes, onSave, isCoach }) {
+  const savedValue = (notes && notes[exId]) || "";
+  const [value, setValue] = useState(savedValue);
+
+  useEffect(() => {
+    setValue(savedValue);
+  }, [savedValue]);
+
+  if (!isCoach && !savedValue) return null;
+
+  return (
+    <AutoGrowTextarea
+      value={value}
+      onChange={(e) => isCoach && setValue(e.target.value)}
+      onBlur={() => {
+        if (isCoach && value !== savedValue) onSave(exId, value);
+      }}
+      readOnly={!isCoach}
+      placeholder={isCoach ? "Placements, réglages machine..." : ""}
+      style={{
+        width: "100%",
+        boxSizing: "border-box",
+        marginBottom: 10,
+        padding: "6px 10px",
+        fontSize: 12,
+        fontFamily: FONT_BODY,
+        color: COLORS.textDim,
+        background: COLORS.bg2,
+        border: `1px dashed ${COLORS.cardBorder}`,
+        borderRadius: 6,
+      }}
+    />
+  );
+}
 
 function readFileAsDataURL(file) {
   return new Promise((resolve, reject) => {
