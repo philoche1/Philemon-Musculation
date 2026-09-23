@@ -6437,13 +6437,12 @@ function RecetteAssiette({ categories = [], size = 140 }) {
           <path key={s.key} d={s.path} fill={s.color} stroke={COLORS.bg} strokeWidth="3" opacity={categories.includes(s.key) ? 1 : 0.12} />
         ))}
       </svg>
-      <div style={{ display: "flex", alignItems: "center", gap: 5, opacity: hasFruits ? 1 : 0.3 }}>
-        <svg width="14" height="14" viewBox="0 0 24 24" style={{ flexShrink: 0 }}>
+      <div style={{ display: "flex", alignItems: "center", opacity: hasFruits ? 1 : 0.3 }}>
+        <svg width="56" height="56" viewBox="0 0 24 24" style={{ flexShrink: 0 }}>
           <path d="M12 8.5c-2.9 0-5 2.3-5 5.6 0 3.3 2.2 6.4 4 6.4.8 0 1-.4 1.7-.4s.9.4 1.7.4c1.8 0 4-3.1 4-6.4 0-3.3-2.1-5.6-4-5.6-.7 0-1.2.3-1.7.3s-1-.3-1.7-.3z" fill="#E091C4" />
           <path d="M12.3 8.2c-.2-1.4.6-2.7 1.9-3.2" fill="none" stroke="#8C5A3B" strokeWidth="1" strokeLinecap="round" />
           <path d="M12.1 5.2c1-.6 2.1.2 2.1 1.3" fill="none" stroke="#5CB85C" strokeWidth="1.4" strokeLinecap="round" />
         </svg>
-        <span style={{ fontSize: 11, color: hasFruits ? COLORS.text : COLORS.textFaint }}>Fruits</span>
       </div>
     </div>
   );
@@ -7397,7 +7396,7 @@ function AlimentationView({ clientId, role, data, persistLibrary, activeClient, 
             // Icône d'un fruit entier, pour rappeler visuellement qu'une
             // portion = un fruit, plutôt que "remplir" la moitié de l'assiette
             // d'une couleur pleine : c'est le fruit qui est rose, pas l'assiette.
-            <g transform="translate(114, 139) scale(3)" style={{ pointerEvents: "none" }}>
+            <g transform="translate(39, 89) scale(5.1)" style={{ pointerEvents: "none" }}>
               <path d="M12 8.5c-2.9 0-5 2.3-5 5.6 0 3.3 2.2 6.4 4 6.4.8 0 1-.4 1.7-.4s.9.4 1.7.4c1.8 0 4-3.1 4-6.4 0-3.3-2.1-5.6-4-5.6-.7 0-1.2.3-1.7.3s-1-.3-1.7-.3z" fill="#E091C4" />
               <path d="M12.3 8.2c-.2-1.4.6-2.7 1.9-3.2" fill="none" stroke="#8C5A3B" strokeWidth="1" strokeLinecap="round" />
               <path d="M12.1 5.2c1-.6 2.1.2 2.1 1.3" fill="none" stroke="#5CB85C" strokeWidth="1.4" strokeLinecap="round" />
