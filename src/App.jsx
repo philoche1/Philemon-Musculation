@@ -6503,6 +6503,14 @@ function DetailedMealPlanSection({ data, persistLibrary, activeClient, assignDet
   const recettesMap = {};
   recettes.forEach((r) => { recettesMap[r.id] = r; });
 
+  // Toujours la version la plus fraîche de `data`, pour que les sauvegardes
+  // automatiques différées (debounce) ne repartent jamais d'une photo
+  // périmée et n'écrasent pas une recette/un plan enregistré entre-temps.
+  const dataRef = useRef(data);
+  useEffect(() => {
+    dataRef.current = data;
+  }, [data]);
+
   const [showRecettes, setShowRecettes] = useState(false);
   const [showPlans, setShowPlans] = useState(false);
   const [editingRecetteId, setEditingRecetteId] = useState(null);
@@ -6559,7 +6567,7 @@ function DetailedMealPlanSection({ data, persistLibrary, activeClient, assignDet
 
       // Ajoute les recettes générées à la bibliothèque (en réutilisant une
       // recette existante si le nom correspond déjà exactement).
-      const newRecettes = [...recettes];
+      const newRecettes = [...(dataRef.current.recettes || [])];
       const indexToId = json.recettes.map((r) => {
         const nom = (r.nom || "").trim();
         const existing = newRecettes.find((e) => e.nom.trim().toLowerCase() === nom.toLowerCase());
@@ -6598,16 +6606,9 @@ function DetailedMealPlanSection({ data, persistLibrary, activeClient, assignDet
 
       const planName = `Plan personnalisé · ${new Date().toLocaleDateString("fr-FR")}`;
       const newPlan = { id: uid("plan"), nom: planName, grille };
-      persistLibrary({
-        exercises: data.exercises,
-        seanceTypes: data.seanceTypes,
-        programs: data.programs,
-        ctTypes: data.ctTypes,
-        ctPrograms: data.ctPrograms,
-        alimentationVideos: data.alimentationVideos,
-        ctLevelNames: data.ctLevelNames,
+      saveLibraryPatch({
         recettes: newRecettes,
-        plansAlimentairesDetailes: [...plans, newPlan],
+        plansAlimentairesDetailes: [...(dataRef.current.plansAlimentairesDetailes || []), newPlan],
       });
       setShowPlans(true);
       setEditingPlanId(null);
@@ -6619,16 +6620,17 @@ function DetailedMealPlanSection({ data, persistLibrary, activeClient, assignDet
   };
 
   const saveLibraryPatch = (patch) => {
+    const fresh = dataRef.current;
     persistLibrary({
-      exercises: data.exercises,
-      seanceTypes: data.seanceTypes,
-      programs: data.programs,
-      ctTypes: data.ctTypes,
-      ctPrograms: data.ctPrograms,
-      alimentationVideos: data.alimentationVideos,
-      ctLevelNames: data.ctLevelNames,
-      recettes: data.recettes,
-      plansAlimentairesDetailes: data.plansAlimentairesDetailes,
+      exercises: fresh.exercises,
+      seanceTypes: fresh.seanceTypes,
+      programs: fresh.programs,
+      ctTypes: fresh.ctTypes,
+      ctPrograms: fresh.ctPrograms,
+      alimentationVideos: fresh.alimentationVideos,
+      ctLevelNames: fresh.ctLevelNames,
+      recettes: fresh.recettes,
+      plansAlimentairesDetailes: fresh.plansAlimentairesDetailes,
       ...patch,
     });
   };
@@ -6663,12 +6665,13 @@ function DetailedMealPlanSection({ data, persistLibrary, activeClient, assignDet
     const nom = draft.nom.trim();
     if (!nom) return;
     const ingredients = draft.ingredientsText.split("\n").map((s) => s.trim()).filter(Boolean);
+    const freshRecettes = dataRef.current.recettes || [];
     if (id === "new") {
       const newId = uid("rec");
-      saveLibraryPatch({ recettes: [...recettes, { id: newId, nom, ingredients, categories: draft.categories, moment: draft.moment }] });
+      saveLibraryPatch({ recettes: [...freshRecettes, { id: newId, nom, ingredients, categories: draft.categories, moment: draft.moment }] });
       setEditingRecetteId(newId);
     } else {
-      saveLibraryPatch({ recettes: recettes.map((r) => (r.id === id ? { ...r, nom, ingredients, categories: draft.categories, moment: draft.moment } : r)) });
+      saveLibraryPatch({ recettes: freshRecettes.map((r) => (r.id === id ? { ...r, nom, ingredients, categories: draft.categories, moment: draft.moment } : r)) });
     }
   };
   const recetteDraftRef = useRef({ draft: null, id: null });
@@ -6689,7 +6692,9 @@ function DetailedMealPlanSection({ data, persistLibrary, activeClient, assignDet
 
   const deleteRecette = (id) => {
     if (!window.confirm("Supprimer cette recette ? Elle sera retirée des plans qui l'utilisent.")) return;
-    const newPlans = plans.map((p) => {
+    const freshPlans = dataRef.current.plansAlimentairesDetailes || [];
+    const freshRecettes = dataRef.current.recettes || [];
+    const newPlans = freshPlans.map((p) => {
       const grille = { ...p.grille };
       JOURS_SEMAINE.forEach(({ key: jour }) => {
         REPAS_SEMAINE.forEach(({ key: repas }) => {
@@ -6698,7 +6703,7 @@ function DetailedMealPlanSection({ data, persistLibrary, activeClient, assignDet
       });
       return { ...p, grille };
     });
-    saveLibraryPatch({ recettes: recettes.filter((r) => r.id !== id), plansAlimentairesDetailes: newPlans });
+    saveLibraryPatch({ recettes: freshRecettes.filter((r) => r.id !== id), plansAlimentairesDetailes: newPlans });
   };
 
   // --- Plans --- (même principe d'enregistrement automatique que les recettes)
@@ -6717,12 +6722,13 @@ function DetailedMealPlanSection({ data, persistLibrary, activeClient, assignDet
     if (!draft) return;
     const nom = draft.nom.trim();
     if (!nom) return;
+    const freshPlans = dataRef.current.plansAlimentairesDetailes || [];
     if (id === "new") {
       const newId = uid("plan");
-      saveLibraryPatch({ plansAlimentairesDetailes: [...plans, { id: newId, nom, grille: draft.grille }] });
+      saveLibraryPatch({ plansAlimentairesDetailes: [...freshPlans, { id: newId, nom, grille: draft.grille }] });
       setEditingPlanId(newId);
     } else {
-      saveLibraryPatch({ plansAlimentairesDetailes: plans.map((p) => (p.id === id ? { ...p, nom, grille: draft.grille } : p)) });
+      saveLibraryPatch({ plansAlimentairesDetailes: freshPlans.map((p) => (p.id === id ? { ...p, nom, grille: draft.grille } : p)) });
     }
   };
   const planDraftRef = useRef({ draft: null, id: null });
@@ -6743,7 +6749,7 @@ function DetailedMealPlanSection({ data, persistLibrary, activeClient, assignDet
 
   const deletePlan = (id) => {
     if (!window.confirm("Supprimer ce plan alimentaire ?")) return;
-    saveLibraryPatch({ plansAlimentairesDetailes: plans.filter((p) => p.id !== id) });
+    saveLibraryPatch({ plansAlimentairesDetailes: (dataRef.current.plansAlimentairesDetailes || []).filter((p) => p.id !== id) });
   };
 
   const assignedPlan = activeClient && activeClient.detailedMealPlanId ? plans.find((p) => p.id === activeClient.detailedMealPlanId) : null;
