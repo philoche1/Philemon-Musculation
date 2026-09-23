@@ -19,8 +19,77 @@ const bookingsKey = (clientId) => `calendly-bookings-v1-${clientId}`;
 const PROSPECTS_KEY = "prospects-v1";
 const PROSPECT_STAGES = ["À contacter", "RDV pris", "Séance faite", "Client", "Perdu"];
 
+// Affiche une photo en plein écran (clic n'importe où pour fermer), pour
+// pouvoir l'agrandir depuis le journal photo par ex.
+function PhotoLightbox({ photo, onClose }) {
+  if (!photo) return null;
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.85)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 1000,
+        padding: 20,
+        cursor: "zoom-out",
+      }}
+    >
+      <img
+        src={photo.dataUrl}
+        alt=""
+        style={{ maxWidth: "100%", maxHeight: "100%", borderRadius: 8, boxShadow: "0 10px 40px rgba(0,0,0,0.6)", objectFit: "contain" }}
+        onClick={(e) => e.stopPropagation()}
+      />
+      <button
+        onClick={onClose}
+        title="Fermer"
+        aria-label="Fermer"
+        style={{
+          position: "fixed",
+          top: 16,
+          right: 16,
+          width: 36,
+          height: 36,
+          borderRadius: "50%",
+          border: "none",
+          background: "rgba(255,255,255,0.15)",
+          color: "#fff",
+          fontSize: 18,
+          cursor: "pointer",
+        }}
+      >
+        ✕
+      </button>
+    </div>
+  );
+}
+
 function uid(prefix) {
   return prefix + Math.random().toString(36).slice(2, 9);
+}
+
+// Certaines lectures juste après l'ouverture de l'app (cold start du serveur,
+// jeton d'auth pas encore tout à fait prêt...) peuvent échouer ou renvoyer un
+// résultat vide de façon transitoire — d'où les séances "manquantes" qui
+// réapparaissent après une actualisation. On retente donc 2 fois avant
+// d'abandonner et de retomber sur une liste vide.
+async function storageGetWithRetry(key, shared, retries = 2, delayMs = 700) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const r = await window.storage.get(key, shared);
+      if (r && r.value) return r;
+    } catch (e) {
+      // on retente silencieusement
+    }
+    if (attempt < retries) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+  return null;
 }
 const LIENS_CALENDLY = {
   "30min": "https://calendly.com/philemon-stordeur/philemon-musculation-30min",
@@ -419,12 +488,16 @@ export default function App() {
           ctPrograms: [],
           alimentationVideos: { matin: "", midi: "", gouter: "", soir: "" },
           ctLevelNames: ["Bilatéral", "Unilatéral"],
+          recettes: [],
+          plansAlimentairesDetailes: [],
         };
       } else {
         if (!lib.ctTypes) lib.ctTypes = [];
         if (!lib.ctPrograms) lib.ctPrograms = [];
         if (!lib.alimentationVideos) lib.alimentationVideos = { matin: "", midi: "", gouter: "", soir: "" };
         if (!lib.ctLevelNames) lib.ctLevelNames = ["Bilatéral", "Unilatéral"];
+        if (!lib.recettes) lib.recettes = [];
+        if (!lib.plansAlimentairesDetailes) lib.plansAlimentairesDetailes = [];
       }
       setLibrary(lib);
       setLibraryLoaded(true);
@@ -441,20 +514,27 @@ export default function App() {
     })();
   }, []);
 
-   // Vérifie seulement si un compte coach existe déjà, sans jamais exposer le mot de passe
+   // Vérifie seulement si un compte coach existe déjà, sans jamais exposer le mot de passe.
+   // Une erreur réseau transitoire ne doit jamais faire croire à tort qu'aucun
+   // compte n'existe (ce qui affiche à tort l'écran "Créer mon espace coach")
+   // — on retente donc avant d'abandonner, et en dernier recours on ne
+   // tranche pas : on retente une fois de plus juste avant d'afficher l'écran.
   useEffect(() => {
     (async () => {
-      try {
-        const res = await fetch("/api/musculation-coach-login", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "check" }),
-        });
-        const data = await res.json().catch(() => ({}));
-        setCoachAccount(data.hasAccount ? { email: null } : null);
-      } catch (e) {
-        setCoachAccount(null);
+      let data = null;
+      for (let attempt = 0; attempt <= 2 && !data; attempt++) {
+        try {
+          const res = await fetch("/api/musculation-coach-login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "check" }),
+          });
+          const json = await res.json().catch(() => null);
+          if (json && typeof json.hasAccount === "boolean") data = json;
+        } catch (e) {}
+        if (!data && attempt < 2) await new Promise((r) => setTimeout(r, 700));
       }
+      setCoachAccount(data && data.hasAccount ? { email: null } : null);
       setCoachAccountLoaded(true);
     })();
   }, []);
@@ -489,7 +569,7 @@ export default function App() {
     (async () => {
       let s = null;
       try {
-        const r = await window.storage.get(sessionsKey(clientId), true);
+        const r = await storageGetWithRetry(sessionsKey(clientId), true);
         if (r && r.value) s = JSON.parse(r.value);
       } catch (e) {}
       if (!s) s = [];
@@ -794,6 +874,15 @@ const refreshProspects = useCallback(async () => {
     try { await window.storage.set(CLIENTS_KEY, JSON.stringify(newClients), true); } catch (e) {}
   }, [clientId, clients]);
 
+  const assignDetailedMealPlan = useCallback(async (planId) => {
+    if (!clientId) return;
+    const newClients = clients.map((c) =>
+      c.id === clientId ? { ...c, detailedMealPlanId: planId || null } : c
+    );
+    setClients(newClients);
+    try { await window.storage.set(CLIENTS_KEY, JSON.stringify(newClients), true); } catch (e) {}
+  }, [clientId, clients]);
+
   const assignAccompagnementPresentiel = useCallback(async (total) => {
     if (!clientId) return;
     const newClients = clients.map((c) =>
@@ -1082,7 +1171,7 @@ bookings={bookings}
             )}
             {view === "progression" && <ProgressionView data={data} />}
             {view === "ct" && <CTView data={data} activeClient={activeClient} clientId={clientId} role={roleEffectif} persistLibrary={persistLibrary} />}
-            {view === "alimentation" && <AlimentationView clientId={clientId} role={roleEffectif} data={data} persistLibrary={persistLibrary} activeClient={activeClient} assignMealPlan={assignMealPlan} />}
+            {view === "alimentation" && <AlimentationView clientId={clientId} role={roleEffectif} data={data} persistLibrary={persistLibrary} activeClient={activeClient} assignMealPlan={assignMealPlan} assignDetailedMealPlan={assignDetailedMealPlan} />}
             {view === "documents" && <DocumentsView clientId={clientId} role={roleEffectif} activeClient={activeClient} />}
             {view === "programmes" && (
               <ProgrammesView
@@ -3477,6 +3566,7 @@ function CircuitTimer({
   workInMinutes = false,
   customPhases = null,
   customSummary = null,
+  headerExtra = null,
 }) {
   const [rounds, setRounds] = useState(defaultRounds);
   const [workSeconds, setWorkSeconds] = useState(defaultWork);
@@ -3571,13 +3661,16 @@ function CircuitTimer({
   if (!started) {
     return (
       <div style={styles.circuitPanel}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
           <div style={styles.circuitTitle}>{title}</div>
-          {!customPhases && (
-            <button style={styles.linkBtn} onClick={() => setShowSettings((s) => !s)}>
-              {showSettings ? "Masquer les paramètres" : "Paramètres"}
-            </button>
-          )}
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            {headerExtra}
+            {!customPhases && (
+              <button style={styles.linkBtn} onClick={() => setShowSettings((s) => !s)}>
+                {showSettings ? "Masquer les paramètres" : "Paramètres"}
+              </button>
+            )}
+          </div>
         </div>
         <div style={{ fontSize: 12, color: COLORS.textDim, margin: "4px 0 10px" }}>
           {customSummary || `${exerciseNames.length} exercice${exerciseNames.length > 1 ? "s" : ""} · ${workInMinutes ? formatTimer(workSeconds) : `${workSeconds}s`} d'effort / ${restSeconds}s de repos · ${roundRestSeconds}s entre les tours · durée totale ≈ ${formatTimer(totalSeconds)}`}
@@ -4149,19 +4242,8 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
               {idx === finHeaderIndex && (
                 <div style={styles.sectionHeader}>Fin de séance</div>
               )}
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 11, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8, paddingBottom: 4, borderBottom: `1px solid ${COLORS.cardBorder}` }}>
-                <span>{label}</span>
-                {label === "Échauffement" && ids.length > 0 && (
-                  <label style={{ display: "flex", alignItems: "center", gap: 4, textTransform: "none", letterSpacing: 0, cursor: "pointer", fontSize: 11 }}>
-                    <input
-                      type="checkbox"
-                      checked={allValidatedInZone(ids)}
-                      onChange={() => toggleAllInZone(ids)}
-                      style={{ cursor: "pointer" }}
-                    />
-                    Tout valider
-                  </label>
-                )}
+              <div style={{ fontSize: 11, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8, paddingBottom: 4, borderBottom: `1px solid ${COLORS.cardBorder}` }}>
+                {label}
               </div>
               {label === "Échauffement" && ids.length > 0 && (() => {
                 const warmupRounds = Math.max(1, ...ids.map((id) => (grouped[id] ? grouped[id].length : WARMUP_SERIES_COUNT)));
@@ -4170,6 +4252,17 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                     key={ids.join(",") + "_" + warmupRounds}
                     defaultRounds={warmupRounds}
                     exerciseNames={ids.map((id) => (exercisesAliased[id] ? exercisesAliased[id].nom.replace(/\n/g, " ") : "Exercice"))}
+                    headerExtra={
+                      <label style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer", fontSize: 11, color: COLORS.textDim, whiteSpace: "nowrap" }}>
+                        <input
+                          type="checkbox"
+                          checked={allValidatedInZone(ids)}
+                          onChange={() => toggleAllInZone(ids)}
+                          style={{ cursor: "pointer" }}
+                        />
+                        Tout valider
+                      </label>
+                    }
                   />
                 );
               })()}
@@ -5652,6 +5745,8 @@ function CTTableView({ clientId, role, data, persistLibrary }) {
       ctPrograms: data.ctPrograms,
       alimentationVideos: data.alimentationVideos,
       ctLevelNames: cleaned,
+      recettes: data.recettes,
+      plansAlimentairesDetailes: data.plansAlimentairesDetailes,
     });
     setEditingLevels(false);
   };
@@ -6273,7 +6368,408 @@ const MEAL_PLANS = [
   },
 ];
 
-function AlimentationView({ clientId, role, data, persistLibrary, activeClient, assignMealPlan }) {
+// --- Plans alimentaires détaillés (recettes nommées + ingrédients, tableau
+// semaine complet) — système séparé des "Plans 1-5" ci-dessus, plus simples. ---
+const JOURS_SEMAINE = [
+  { key: "lundi", label: "Lundi" },
+  { key: "mardi", label: "Mardi" },
+  { key: "mercredi", label: "Mercredi" },
+  { key: "jeudi", label: "Jeudi" },
+  { key: "vendredi", label: "Vendredi" },
+  { key: "samedi", label: "Samedi" },
+  { key: "dimanche", label: "Dimanche" },
+];
+const REPAS_SEMAINE = [
+  { key: "matin", label: "Matin" },
+  { key: "midi", label: "Midi" },
+  { key: "gouter", label: "Goûter" },
+  { key: "soir", label: "Soir" },
+];
+const CATEGORIES_ASSIETTE = [
+  { key: "legumes", label: "Légumes", color: "#5CB85C" },
+  { key: "proteines", label: "Protéines", color: "#E57373" },
+  { key: "glucides", label: "Glucides", color: "#FFB74D" },
+];
+
+function emptyDetailedPlanGrille() {
+  const g = {};
+  JOURS_SEMAINE.forEach(({ key }) => {
+    g[key] = { matin: null, midi: null, gouter: null, soir: null, activite: "" };
+  });
+  return g;
+}
+
+// Schéma d'assiette en lecture seule : met en valeur les catégories d'une
+// recette (légumes / protéines / glucides), les autres restent estompées.
+function RecetteAssiette({ categories = [], size = 140 }) {
+  const cx = 150, cy = 150, r = 120;
+  const vegPath = describePlateSlice(cx, cy, r, 0, 180);
+  const proteinPath = describePlateSlice(cx, cy, r, 180, 270);
+  const carbsPath = describePlateSlice(cx, cy, r, 270, 360);
+  const slices = [
+    { key: "legumes", path: vegPath, color: "#5CB85C" },
+    { key: "proteines", path: proteinPath, color: "#E57373" },
+    { key: "glucides", path: carbsPath, color: "#FFB74D" },
+  ];
+  return (
+    <svg width={size} height={size} viewBox="0 0 300 300" xmlns="http://www.w3.org/2000/svg" style={{ background: COLORS.bg, flexShrink: 0 }}>
+      <circle cx={cx} cy={cy} r={r + 6} fill="none" stroke={COLORS.cardBorder} strokeWidth="2" />
+      {slices.map((s) => (
+        <path key={s.key} d={s.path} fill={s.color} stroke={COLORS.bg} strokeWidth="3" opacity={categories.includes(s.key) ? 1 : 0.12} />
+      ))}
+    </svg>
+  );
+}
+
+// Fenêtre d'agrandissement d'une recette : nom, ingrédients, schéma d'assiette.
+function RecetteDetailModal({ recette, onClose }) {
+  if (!recette) return null;
+  return (
+    <div
+      onClick={onClose}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 20 }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{ background: COLORS.card, border: `1px solid ${COLORS.cardBorder}`, borderRadius: 14, padding: 20, maxWidth: 420, width: "100%", maxHeight: "85vh", overflowY: "auto" }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 12 }}>
+          <div style={{ fontFamily: FONT_DISPLAY, fontSize: 18, color: COLORS.accent }}>{recette.nom}</div>
+          <button onClick={onClose} title="Fermer" aria-label="Fermer" style={{ width: 28, height: 28, borderRadius: "50%", border: "none", background: COLORS.bg2, color: COLORS.textDim, fontSize: 14, cursor: "pointer", flexShrink: 0 }}>✕</button>
+        </div>
+        <div style={{ display: "flex", justifyContent: "center", marginBottom: 14 }}>
+          <RecetteAssiette categories={recette.categories || []} size={160} />
+        </div>
+        <div style={{ fontSize: 12, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>Ingrédients</div>
+        {(recette.ingredients || []).length === 0 ? (
+          <div style={{ fontSize: 13, color: COLORS.textFaint }}>Aucun ingrédient renseigné.</div>
+        ) : (
+          <ul style={{ margin: 0, paddingLeft: 18 }}>
+            {recette.ingredients.map((ing, i) => (
+              <li key={i} style={{ fontSize: 13, color: COLORS.text, marginBottom: 4 }}>{ing}</li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Gère la bibliothèque de recettes, la bibliothèque de plans alimentaires
+// détaillés (tableau semaine complet), leur assignation au client, et
+// l'affichage du plan assigné. Système séparé des "Plans 1-5" plus simples.
+function DetailedMealPlanSection({ data, persistLibrary, activeClient, assignDetailedMealPlan, isCoach }) {
+  const recettes = data.recettes || [];
+  const plans = data.plansAlimentairesDetailes || [];
+  const recettesMap = {};
+  recettes.forEach((r) => { recettesMap[r.id] = r; });
+
+  const [showRecettes, setShowRecettes] = useState(false);
+  const [showPlans, setShowPlans] = useState(false);
+  const [editingRecetteId, setEditingRecetteId] = useState(null);
+  const [recetteDraft, setRecetteDraft] = useState(null);
+  const [editingPlanId, setEditingPlanId] = useState(null);
+  const [planDraft, setPlanDraft] = useState(null);
+  const [detailRecette, setDetailRecette] = useState(null);
+
+  const saveLibraryPatch = (patch) => {
+    persistLibrary({
+      exercises: data.exercises,
+      seanceTypes: data.seanceTypes,
+      programs: data.programs,
+      ctTypes: data.ctTypes,
+      ctPrograms: data.ctPrograms,
+      alimentationVideos: data.alimentationVideos,
+      ctLevelNames: data.ctLevelNames,
+      recettes: data.recettes,
+      plansAlimentairesDetailes: data.plansAlimentairesDetailes,
+      ...patch,
+    });
+  };
+
+  // --- Recettes ---
+  const startNewRecette = () => {
+    setRecetteDraft({ id: null, nom: "", ingredientsText: "", categories: [] });
+    setEditingRecetteId("new");
+  };
+  const startEditRecette = (r) => {
+    setRecetteDraft({ id: r.id, nom: r.nom, ingredientsText: (r.ingredients || []).join("\n"), categories: r.categories || [] });
+    setEditingRecetteId(r.id);
+  };
+  const toggleDraftCategory = (key) => {
+    setRecetteDraft((d) => ({
+      ...d,
+      categories: d.categories.includes(key) ? d.categories.filter((c) => c !== key) : [...d.categories, key],
+    }));
+  };
+  const saveRecette = () => {
+    const nom = recetteDraft.nom.trim();
+    if (!nom) return;
+    const ingredients = recetteDraft.ingredientsText.split("\n").map((s) => s.trim()).filter(Boolean);
+    if (editingRecetteId === "new") {
+      const newRecette = { id: uid("rec"), nom, ingredients, categories: recetteDraft.categories };
+      saveLibraryPatch({ recettes: [...recettes, newRecette] });
+    } else {
+      saveLibraryPatch({ recettes: recettes.map((r) => (r.id === editingRecetteId ? { ...r, nom, ingredients, categories: recetteDraft.categories } : r)) });
+    }
+    setEditingRecetteId(null);
+    setRecetteDraft(null);
+  };
+  const deleteRecette = (id) => {
+    if (!window.confirm("Supprimer cette recette ? Elle sera retirée des plans qui l'utilisent.")) return;
+    const newPlans = plans.map((p) => {
+      const grille = { ...p.grille };
+      JOURS_SEMAINE.forEach(({ key: jour }) => {
+        REPAS_SEMAINE.forEach(({ key: repas }) => {
+          if (grille[jour] && grille[jour][repas] === id) grille[jour] = { ...grille[jour], [repas]: null };
+        });
+      });
+      return { ...p, grille };
+    });
+    saveLibraryPatch({ recettes: recettes.filter((r) => r.id !== id), plansAlimentairesDetailes: newPlans });
+  };
+
+  // --- Plans ---
+  const startNewPlan = () => {
+    setPlanDraft({ id: null, nom: "", grille: emptyDetailedPlanGrille() });
+    setEditingPlanId("new");
+  };
+  const startEditPlan = (p) => {
+    setPlanDraft({ id: p.id, nom: p.nom, grille: JSON.parse(JSON.stringify(p.grille)) });
+    setEditingPlanId(p.id);
+  };
+  const updatePlanCell = (jour, repas, value) => {
+    setPlanDraft((d) => ({ ...d, grille: { ...d.grille, [jour]: { ...d.grille[jour], [repas]: value } } }));
+  };
+  const savePlan = () => {
+    const nom = planDraft.nom.trim();
+    if (!nom) return;
+    if (editingPlanId === "new") {
+      saveLibraryPatch({ plansAlimentairesDetailes: [...plans, { id: uid("plan"), nom, grille: planDraft.grille }] });
+    } else {
+      saveLibraryPatch({ plansAlimentairesDetailes: plans.map((p) => (p.id === editingPlanId ? { ...p, nom, grille: planDraft.grille } : p)) });
+    }
+    setEditingPlanId(null);
+    setPlanDraft(null);
+  };
+  const deletePlan = (id) => {
+    if (!window.confirm("Supprimer ce plan alimentaire ?")) return;
+    saveLibraryPatch({ plansAlimentairesDetailes: plans.filter((p) => p.id !== id) });
+  };
+
+  const assignedPlan = activeClient && activeClient.detailedMealPlanId ? plans.find((p) => p.id === activeClient.detailedMealPlanId) : null;
+
+  return (
+    <div style={{ ...styles.card, marginBottom: 20 }}>
+      <div style={{ fontSize: 11, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 10 }}>
+        Plan alimentaire détaillé de la semaine
+      </div>
+
+      {isCoach && (
+        <div style={{ marginBottom: 14 }}>
+          <button style={styles.linkBtn} onClick={() => setShowRecettes((s) => !s)}>
+            {showRecettes ? "Masquer" : "Gérer"} la bibliothèque de recettes ({recettes.length})
+          </button>
+          {showRecettes && (
+            <div style={{ marginTop: 10, padding: "10px 12px", background: COLORS.bg2, borderRadius: 8, border: `1px solid ${COLORS.cardBorder}` }}>
+              {recettes.map((r) => (
+                <div key={r.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "6px 0", borderBottom: `1px solid ${COLORS.cardBorder}` }}>
+                  <span style={{ fontSize: 13, color: COLORS.text }}>{r.nom}</span>
+                  <div style={{ display: "flex", gap: 10, flexShrink: 0 }}>
+                    <button style={styles.linkBtn} onClick={() => startEditRecette(r)}>Modifier</button>
+                    <button style={{ ...styles.linkBtn, color: COLORS.danger }} onClick={() => deleteRecette(r.id)}>Supprimer</button>
+                  </div>
+                </div>
+              ))}
+              {recettes.length === 0 && <div style={{ fontSize: 12, color: COLORS.textFaint, padding: "6px 0" }}>Aucune recette pour l'instant.</div>}
+
+              {editingRecetteId ? (
+                <div style={{ marginTop: 12, padding: "10px 12px", background: COLORS.card, borderRadius: 8, border: `1px solid ${COLORS.cardBorder}` }}>
+                  <label style={{ fontSize: 12, color: COLORS.textDim, display: "block", marginBottom: 4 }}>Nom du plat</label>
+                  <input
+                    type="text"
+                    value={recetteDraft.nom}
+                    onChange={(e) => setRecetteDraft((d) => ({ ...d, nom: e.target.value }))}
+                    style={{ ...styles.textInput, marginBottom: 10 }}
+                    placeholder="Ex : Saumon riz brocolis"
+                  />
+                  <label style={{ fontSize: 12, color: COLORS.textDim, display: "block", marginBottom: 4 }}>Ingrédients (un par ligne)</label>
+                  <AutoGrowTextarea
+                    value={recetteDraft.ingredientsText}
+                    onChange={(e) => setRecetteDraft((d) => ({ ...d, ingredientsText: e.target.value }))}
+                    style={{ ...styles.textInput, marginBottom: 10, minHeight: 60 }}
+                  />
+                  <label style={{ fontSize: 12, color: COLORS.textDim, display: "block", marginBottom: 6 }}>Composition de l'assiette</label>
+                  <div style={{ display: "flex", gap: 14, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
+                    {CATEGORIES_ASSIETTE.map((cat) => (
+                      <label key={cat.key} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, color: COLORS.textDim, cursor: "pointer" }}>
+                        <input type="checkbox" checked={recetteDraft.categories.includes(cat.key)} onChange={() => toggleDraftCategory(cat.key)} />
+                        {cat.label}
+                      </label>
+                    ))}
+                    <RecetteAssiette categories={recetteDraft.categories} size={70} />
+                  </div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button style={styles.primaryBtn} onClick={saveRecette}>Enregistrer</button>
+                    <button style={styles.linkBtn} onClick={() => { setEditingRecetteId(null); setRecetteDraft(null); }}>Annuler</button>
+                  </div>
+                </div>
+              ) : (
+                <button style={{ ...styles.secondaryBtn, marginTop: 10 }} onClick={startNewRecette}>+ Nouvelle recette</button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {isCoach && (
+        <div style={{ marginBottom: 14 }}>
+          <button style={styles.linkBtn} onClick={() => setShowPlans((s) => !s)}>
+            {showPlans ? "Masquer" : "Gérer"} les plans alimentaires détaillés ({plans.length})
+          </button>
+          {showPlans && (
+            <div style={{ marginTop: 10, padding: "10px 12px", background: COLORS.bg2, borderRadius: 8, border: `1px solid ${COLORS.cardBorder}` }}>
+              {plans.map((p) => {
+                const isSelected = activeClient && activeClient.detailedMealPlanId === p.id;
+                return (
+                  <div key={p.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "6px 0", borderBottom: `1px solid ${COLORS.cardBorder}`, flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 13, color: COLORS.text }}>{p.nom}</span>
+                    <div style={{ display: "flex", gap: 10, flexShrink: 0, alignItems: "center" }}>
+                      <button
+                        style={{ ...styles.secondaryBtn, padding: "4px 10px", fontSize: 11, ...(isSelected ? { background: COLORS.accent, color: COLORS.bg, borderColor: COLORS.accent } : {}) }}
+                        onClick={() => assignDetailedMealPlan(isSelected ? null : p.id)}
+                      >
+                        {isSelected ? "✓ Assigné" : "Assigner"}
+                      </button>
+                      <button style={styles.linkBtn} onClick={() => startEditPlan(p)}>Modifier</button>
+                      <button style={{ ...styles.linkBtn, color: COLORS.danger }} onClick={() => deletePlan(p.id)}>Supprimer</button>
+                    </div>
+                  </div>
+                );
+              })}
+              {plans.length === 0 && <div style={{ fontSize: 12, color: COLORS.textFaint, padding: "6px 0" }}>Aucun plan pour l'instant.</div>}
+
+              {editingPlanId ? (
+                <div style={{ marginTop: 12, padding: "10px 12px", background: COLORS.card, borderRadius: 8, border: `1px solid ${COLORS.cardBorder}` }}>
+                  <label style={{ fontSize: 12, color: COLORS.textDim, display: "block", marginBottom: 4 }}>Nom du plan</label>
+                  <input
+                    type="text"
+                    value={planDraft.nom}
+                    onChange={(e) => setPlanDraft((d) => ({ ...d, nom: e.target.value }))}
+                    style={{ ...styles.textInput, marginBottom: 12 }}
+                    placeholder="Ex : Semaine type prise de masse"
+                  />
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ ...styles.table, minWidth: 720 }}>
+                      <thead>
+                        <tr>
+                          <th style={styles.th}></th>
+                          {REPAS_SEMAINE.map((m) => (
+                            <th key={m.key} style={{ ...styles.th, textAlign: "center" }}>{m.label}</th>
+                          ))}
+                          <th style={{ ...styles.th, textAlign: "center" }}>Activité physique</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {JOURS_SEMAINE.map((jour) => (
+                          <tr key={jour.key}>
+                            <td style={{ ...styles.td, fontWeight: 600, whiteSpace: "nowrap" }}>{jour.label}</td>
+                            {REPAS_SEMAINE.map((m) => (
+                              <td key={m.key} style={styles.td}>
+                                <select
+                                  value={planDraft.grille[jour.key][m.key] || ""}
+                                  onChange={(e) => updatePlanCell(jour.key, m.key, e.target.value || null)}
+                                  style={{ ...styles.textInput, marginBottom: 0, fontSize: 12, minWidth: 130 }}
+                                >
+                                  <option value="">—</option>
+                                  {recettes.map((r) => (
+                                    <option key={r.id} value={r.id}>{r.nom}</option>
+                                  ))}
+                                </select>
+                              </td>
+                            ))}
+                            <td style={styles.td}>
+                              <input
+                                type="text"
+                                value={planDraft.grille[jour.key].activite || ""}
+                                onChange={(e) => updatePlanCell(jour.key, "activite", e.target.value)}
+                                placeholder="Ex : Course 30min"
+                                style={{ ...styles.textInput, marginBottom: 0, fontSize: 12, minWidth: 130 }}
+                              />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                    <button style={styles.primaryBtn} onClick={savePlan}>Enregistrer</button>
+                    <button style={styles.linkBtn} onClick={() => { setEditingPlanId(null); setPlanDraft(null); }}>Annuler</button>
+                  </div>
+                </div>
+              ) : (
+                <button style={{ ...styles.secondaryBtn, marginTop: 10 }} onClick={startNewPlan}>+ Nouveau plan</button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {assignedPlan ? (
+        <div>
+          <div style={{ fontSize: 13, color: COLORS.text, fontWeight: 600, marginBottom: 2 }}>
+            {assignedPlan.nom} assigné{!isCoach ? " par ton coach" : ""}
+          </div>
+          <div style={{ fontSize: 11, color: COLORS.textFaint, marginBottom: 10 }}>Clique sur un repas pour voir la recette et ses ingrédients.</div>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ ...styles.table, minWidth: 720 }}>
+              <thead>
+                <tr>
+                  <th style={styles.th}></th>
+                  {REPAS_SEMAINE.map((m) => (
+                    <th key={m.key} style={{ ...styles.th, textAlign: "center" }}>{m.label}</th>
+                  ))}
+                  <th style={{ ...styles.th, textAlign: "center" }}>Activité physique</th>
+                </tr>
+              </thead>
+              <tbody>
+                {JOURS_SEMAINE.map((jour) => (
+                  <tr key={jour.key}>
+                    <td style={{ ...styles.td, fontWeight: 600, whiteSpace: "nowrap" }}>{jour.label}</td>
+                    {REPAS_SEMAINE.map((m) => {
+                      const recId = assignedPlan.grille[jour.key] ? assignedPlan.grille[jour.key][m.key] : null;
+                      const recette = recId ? recettesMap[recId] : null;
+                      return (
+                        <td
+                          key={m.key}
+                          onClick={() => recette && setDetailRecette(recette)}
+                          style={{ ...styles.td, textAlign: "center", cursor: recette ? "pointer" : "default", color: recette ? COLORS.accent2 : COLORS.textFaint, textDecoration: recette ? "underline dotted" : "none" }}
+                        >
+                          {recette ? recette.nom : "—"}
+                        </td>
+                      );
+                    })}
+                    <td style={{ ...styles.td, textAlign: "center", color: COLORS.textDim }}>
+                      {(assignedPlan.grille[jour.key] && assignedPlan.grille[jour.key].activite) || "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : (
+        <div style={{ fontSize: 13, color: COLORS.textFaint }}>
+          {isCoach ? "Assigne un plan détaillé ci-dessus." : "Aucun plan alimentaire détaillé assigné pour l'instant."}
+        </div>
+      )}
+
+      <RecetteDetailModal recette={detailRecette} onClose={() => setDetailRecette(null)} />
+    </div>
+  );
+}
+
+function AlimentationView({ clientId, role, data, persistLibrary, activeClient, assignMealPlan, assignDetailedMealPlan }) {
   const cx = 150;
   const cy = 150;
   const r = 120;
@@ -6300,6 +6796,7 @@ function AlimentationView({ clientId, role, data, persistLibrary, activeClient, 
   const [selectedDate, setSelectedDate] = useState(todayISO());
   const [hydration, setHydration] = useState({});
   const [previewExample, setPreviewExample] = useState(null);
+  const [enlargedPhoto, setEnlargedPhoto] = useState(null);
   const [hydrationLoaded, setHydrationLoaded] = useState(false);
   const [mealTime, setMealTime] = useState(() => {
     const h = new Date().getHours();
@@ -6382,6 +6879,20 @@ function AlimentationView({ clientId, role, data, persistLibrary, activeClient, 
       };
       const filtered = (photos || []).filter((p) => !(p.date === selectedDate && p.repas === mealTime));
       await persistPhotos([entry, ...filtered]);
+      if (role === "client") {
+        fetch("/api/photo-notification", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${getClientToken()}`,
+          },
+          body: JSON.stringify({
+            clientName: activeClient ? activeClient.name : "Un client",
+            date: selectedDate,
+            repas: mealTime,
+          }),
+        }).catch(() => {});
+      }
     } catch (err) {
       setPhotoError("Impossible d'ajouter cette photo, réessaie.");
     }
@@ -6463,6 +6974,9 @@ function AlimentationView({ clientId, role, data, persistLibrary, activeClient, 
       ctTypes: data.ctTypes,
       ctPrograms: data.ctPrograms,
       alimentationVideos: newVideos,
+      ctLevelNames: data.ctLevelNames,
+      recettes: data.recettes,
+      plansAlimentairesDetailes: data.plansAlimentairesDetailes,
     });
     setEditingVideoMeal(null);
   };
@@ -6646,6 +7160,14 @@ function AlimentationView({ clientId, role, data, persistLibrary, activeClient, 
           </div>
         )}
       </div>
+
+      <DetailedMealPlanSection
+        data={data}
+        persistLibrary={persistLibrary}
+        activeClient={activeClient}
+        assignDetailedMealPlan={assignDetailedMealPlan}
+        isCoach={isCoach}
+      />
 
       <div style={{ marginBottom: 12 }}>
         <label style={{ fontSize: 12, color: COLORS.textDim, display: "block", marginBottom: 6 }}>Date du repas</label>
@@ -6909,7 +7431,8 @@ function AlimentationView({ clientId, role, data, persistLibrary, activeClient, 
                         src={p.dataUrl}
                         alt={p.caption ? `Assiette du ${formatDateFR(p.date)}` : `Repas du ${formatDateFR(p.date)}`}
                         title={p.caption || ""}
-                        style={{ width: "100%", aspectRatio: "1", objectFit: "cover", borderRadius: 10, border: `1px solid ${COLORS.cardBorder}`, display: "block", background: p.caption ? COLORS.bg2 : undefined }}
+                        onClick={() => setEnlargedPhoto(p)}
+                        style={{ width: "100%", aspectRatio: "1", objectFit: "cover", borderRadius: 10, border: `1px solid ${COLORS.cardBorder}`, display: "block", background: p.caption ? COLORS.bg2 : undefined, cursor: "pointer" }}
                       />
                       {p.repas && (
                         <span
@@ -6969,6 +7492,7 @@ function AlimentationView({ clientId, role, data, persistLibrary, activeClient, 
           })()
         )}
       </div>
+      <PhotoLightbox photo={enlargedPhoto} onClose={() => setEnlargedPhoto(null)} />
     </div>
   );
 }
@@ -7144,7 +7668,7 @@ function ProgrammesView({ data, persistLibrary, role, activeClient, assignProgra
 
   const addProgram = (pr) => {
     const newLib = { ...data, programs: [...data.programs, { id: uid("pr"), ...pr }] };
-    persistLibrary({ exercises: newLib.exercises, seanceTypes: newLib.seanceTypes, programs: newLib.programs, ctTypes: newLib.ctTypes, ctPrograms: newLib.ctPrograms, alimentationVideos: newLib.alimentationVideos, ctLevelNames: newLib.ctLevelNames });
+    persistLibrary({ exercises: newLib.exercises, seanceTypes: newLib.seanceTypes, programs: newLib.programs, ctTypes: newLib.ctTypes, ctPrograms: newLib.ctPrograms, alimentationVideos: newLib.alimentationVideos, ctLevelNames: newLib.ctLevelNames, recettes: newLib.recettes, plansAlimentairesDetailes: newLib.plansAlimentairesDetailes });
     setShowNewProgram(false);
   };
 
@@ -7153,13 +7677,13 @@ function ProgrammesView({ data, persistLibrary, role, activeClient, assignProgra
       ...data,
       programs: data.programs.map((p) => (p.id === programId ? { ...p, ...updates } : p)),
     };
-    persistLibrary({ exercises: newLib.exercises, seanceTypes: newLib.seanceTypes, programs: newLib.programs, ctTypes: newLib.ctTypes, ctPrograms: newLib.ctPrograms, alimentationVideos: newLib.alimentationVideos, ctLevelNames: newLib.ctLevelNames });
+    persistLibrary({ exercises: newLib.exercises, seanceTypes: newLib.seanceTypes, programs: newLib.programs, ctTypes: newLib.ctTypes, ctPrograms: newLib.ctPrograms, alimentationVideos: newLib.alimentationVideos, ctLevelNames: newLib.ctLevelNames, recettes: newLib.recettes, plansAlimentairesDetailes: newLib.plansAlimentairesDetailes });
     setEditingProgramId(null);
   };
 
   const addCTProgram = (pr) => {
     const newLib = { ...data, ctPrograms: [...data.ctPrograms, { id: uid("ctpr"), ...pr }] };
-    persistLibrary({ exercises: newLib.exercises, seanceTypes: newLib.seanceTypes, programs: newLib.programs, ctTypes: newLib.ctTypes, ctPrograms: newLib.ctPrograms, alimentationVideos: newLib.alimentationVideos, ctLevelNames: newLib.ctLevelNames });
+    persistLibrary({ exercises: newLib.exercises, seanceTypes: newLib.seanceTypes, programs: newLib.programs, ctTypes: newLib.ctTypes, ctPrograms: newLib.ctPrograms, alimentationVideos: newLib.alimentationVideos, ctLevelNames: newLib.ctLevelNames, recettes: newLib.recettes, plansAlimentairesDetailes: newLib.plansAlimentairesDetailes });
     setShowNewCTProgram(false);
   };
 
@@ -7168,7 +7692,7 @@ function ProgrammesView({ data, persistLibrary, role, activeClient, assignProgra
       ...data,
       ctPrograms: data.ctPrograms.map((p) => (p.id === programId ? { ...p, ...updates } : p)),
     };
-    persistLibrary({ exercises: newLib.exercises, seanceTypes: newLib.seanceTypes, programs: newLib.programs, ctTypes: newLib.ctTypes, ctPrograms: newLib.ctPrograms, alimentationVideos: newLib.alimentationVideos, ctLevelNames: newLib.ctLevelNames });
+    persistLibrary({ exercises: newLib.exercises, seanceTypes: newLib.seanceTypes, programs: newLib.programs, ctTypes: newLib.ctTypes, ctPrograms: newLib.ctPrograms, alimentationVideos: newLib.alimentationVideos, ctLevelNames: newLib.ctLevelNames, recettes: newLib.recettes, plansAlimentairesDetailes: newLib.plansAlimentairesDetailes });
     setEditingCTProgramId(null);
   };
 
@@ -7408,7 +7932,7 @@ function SeanceTypesView({ data, persistLibrary, role, activeClient }) {
 
   const addSeanceType = (st) => {
     const newLib = { ...data, seanceTypes: [...data.seanceTypes, { id: uid("st"), ...st }] };
-    persistLibrary({ exercises: newLib.exercises, seanceTypes: newLib.seanceTypes, programs: newLib.programs, ctTypes: newLib.ctTypes, ctPrograms: newLib.ctPrograms, alimentationVideos: newLib.alimentationVideos, ctLevelNames: newLib.ctLevelNames });
+    persistLibrary({ exercises: newLib.exercises, seanceTypes: newLib.seanceTypes, programs: newLib.programs, ctTypes: newLib.ctTypes, ctPrograms: newLib.ctPrograms, alimentationVideos: newLib.alimentationVideos, ctLevelNames: newLib.ctLevelNames, recettes: newLib.recettes, plansAlimentairesDetailes: newLib.plansAlimentairesDetailes });
     setShowNewSeance(false);
   };
 
@@ -7417,13 +7941,13 @@ function SeanceTypesView({ data, persistLibrary, role, activeClient }) {
       ...data,
       seanceTypes: data.seanceTypes.map((s) => (s.id === seanceTypeId ? { ...s, ...updates } : s)),
     };
-    persistLibrary({ exercises: newLib.exercises, seanceTypes: newLib.seanceTypes, programs: newLib.programs, ctTypes: newLib.ctTypes, ctPrograms: newLib.ctPrograms, alimentationVideos: newLib.alimentationVideos, ctLevelNames: newLib.ctLevelNames });
+    persistLibrary({ exercises: newLib.exercises, seanceTypes: newLib.seanceTypes, programs: newLib.programs, ctTypes: newLib.ctTypes, ctPrograms: newLib.ctPrograms, alimentationVideos: newLib.alimentationVideos, ctLevelNames: newLib.ctLevelNames, recettes: newLib.recettes, plansAlimentairesDetailes: newLib.plansAlimentairesDetailes });
     setEditingSeanceTypeId(null);
   };
 
   const addCTType = (ct) => {
     const newLib = { ...data, ctTypes: [...data.ctTypes, { id: uid("ctst"), ...ct }] };
-    persistLibrary({ exercises: newLib.exercises, seanceTypes: newLib.seanceTypes, programs: newLib.programs, ctTypes: newLib.ctTypes, ctPrograms: newLib.ctPrograms, alimentationVideos: newLib.alimentationVideos, ctLevelNames: newLib.ctLevelNames });
+    persistLibrary({ exercises: newLib.exercises, seanceTypes: newLib.seanceTypes, programs: newLib.programs, ctTypes: newLib.ctTypes, ctPrograms: newLib.ctPrograms, alimentationVideos: newLib.alimentationVideos, ctLevelNames: newLib.ctLevelNames, recettes: newLib.recettes, plansAlimentairesDetailes: newLib.plansAlimentairesDetailes });
     setShowNewCT(false);
   };
 
@@ -7432,7 +7956,7 @@ function SeanceTypesView({ data, persistLibrary, role, activeClient }) {
       ...data,
       ctTypes: data.ctTypes.map((c) => (c.id === ctTypeId ? { ...c, ...updates } : c)),
     };
-    persistLibrary({ exercises: newLib.exercises, seanceTypes: newLib.seanceTypes, programs: newLib.programs, ctTypes: newLib.ctTypes, ctPrograms: newLib.ctPrograms, alimentationVideos: newLib.alimentationVideos, ctLevelNames: newLib.ctLevelNames });
+    persistLibrary({ exercises: newLib.exercises, seanceTypes: newLib.seanceTypes, programs: newLib.programs, ctTypes: newLib.ctTypes, ctPrograms: newLib.ctPrograms, alimentationVideos: newLib.alimentationVideos, ctLevelNames: newLib.ctLevelNames, recettes: newLib.recettes, plansAlimentairesDetailes: newLib.plansAlimentairesDetailes });
     setEditingCTTypeId(null);
   };
 
@@ -7640,7 +8164,7 @@ function ExercisesView({ data, persistLibrary, role }) {
 
   const addExercise = (ex) => {
     const newLib = { ...data, exercises: [...data.exercises, { id: uid("ex"), ...ex }] };
-    persistLibrary({ exercises: newLib.exercises, seanceTypes: newLib.seanceTypes, programs: newLib.programs, ctTypes: newLib.ctTypes, ctPrograms: newLib.ctPrograms, alimentationVideos: newLib.alimentationVideos, ctLevelNames: newLib.ctLevelNames });
+    persistLibrary({ exercises: newLib.exercises, seanceTypes: newLib.seanceTypes, programs: newLib.programs, ctTypes: newLib.ctTypes, ctPrograms: newLib.ctPrograms, alimentationVideos: newLib.alimentationVideos, ctLevelNames: newLib.ctLevelNames, recettes: newLib.recettes, plansAlimentairesDetailes: newLib.plansAlimentairesDetailes });
     setShowNewExercise(false);
   };
 
@@ -7649,7 +8173,7 @@ function ExercisesView({ data, persistLibrary, role }) {
       ...data,
       exercises: data.exercises.map((e) => (e.id === exId ? { ...e, ...updates } : e)),
     };
-    persistLibrary({ exercises: newLib.exercises, seanceTypes: newLib.seanceTypes, programs: newLib.programs, ctTypes: newLib.ctTypes, ctPrograms: newLib.ctPrograms, alimentationVideos: newLib.alimentationVideos, ctLevelNames: newLib.ctLevelNames });
+    persistLibrary({ exercises: newLib.exercises, seanceTypes: newLib.seanceTypes, programs: newLib.programs, ctTypes: newLib.ctTypes, ctPrograms: newLib.ctPrograms, alimentationVideos: newLib.alimentationVideos, ctLevelNames: newLib.ctLevelNames, recettes: newLib.recettes, plansAlimentairesDetailes: newLib.plansAlimentairesDetailes });
     setEditingExerciseId(null);
   };
 
@@ -7676,7 +8200,7 @@ function ExercisesView({ data, persistLibrary, role }) {
       ...data,
       exercises: data.exercises.map((e) => (selectedIds.includes(e.id) ? { ...e, tempsRepos: bulkTempsRepos } : e)),
     };
-    persistLibrary({ exercises: newLib.exercises, seanceTypes: newLib.seanceTypes, programs: newLib.programs, ctTypes: newLib.ctTypes, ctPrograms: newLib.ctPrograms, alimentationVideos: newLib.alimentationVideos, ctLevelNames: newLib.ctLevelNames });
+    persistLibrary({ exercises: newLib.exercises, seanceTypes: newLib.seanceTypes, programs: newLib.programs, ctTypes: newLib.ctTypes, ctPrograms: newLib.ctPrograms, alimentationVideos: newLib.alimentationVideos, ctLevelNames: newLib.ctLevelNames, recettes: newLib.recettes, plansAlimentairesDetailes: newLib.plansAlimentairesDetailes });
     setBulkMode(false);
     setSelectedIds([]);
   };
