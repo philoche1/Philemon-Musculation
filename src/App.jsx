@@ -500,6 +500,49 @@ export default function App() {
         if (!lib.plansAlimentairesDetailes) lib.plansAlimentairesDetailes = [];
       }
 
+      // Seed ponctuel du plan alimentaire "Sylvie Bataille" (transcrit depuis
+      // une feuille manuscrite) — ne s'exécute qu'une fois, tant qu'aucun plan
+      // de ce nom n'existe déjà. Les cases peu lisibles sont laissées vides
+      // plutôt que devinées ; pas de détail d'ingrédients sur les recettes.
+      if (role === "coach" && !(lib.plansAlimentairesDetailes || []).some((p) => p.nom === "Sylvie Bataille")) {
+        const seedRecettes = [
+          { id: "rec_sb2_m_skyr", nom: "Skyr protéiné, thé", ingredients: [], categories: [], moment: ["matin"] },
+          { id: "rec_sb2_m_fb", nom: "Fromage blanc, thé", ingredients: [], categories: [], moment: ["matin"] },
+          { id: "rec_sb2_m_kiwi", nom: "Kiwi, thé", ingredients: [], categories: [], moment: ["matin"] },
+          { id: "rec_sb2_m_fb_pomme", nom: "Fromage blanc, pomme, thé", ingredients: [], categories: [], moment: ["matin"] },
+          { id: "rec_sb2_m_skyr_kiwi", nom: "Skyr protéiné, kiwi, thé", ingredients: [], categories: [], moment: ["matin"] },
+          { id: "rec_sb2_midi_boeuf", nom: "Bœuf en papillote, riz, coulis de tomate", ingredients: [], categories: [], moment: ["midi"] },
+          { id: "rec_sb2_midi_quiche", nom: "Quiche sans pâte, salade de tomates", ingredients: [], categories: [], moment: ["midi"] },
+          { id: "rec_sb2_midi_steak", nom: "Steak, oignon, tomate", ingredients: [], categories: [], moment: ["midi"] },
+          { id: "rec_sb2_soir_tomate_thon", nom: "Tomate, sauce au thon", ingredients: [], categories: [], moment: ["soir"] },
+          { id: "rec_sb2_soir_celeri_saumon", nom: "Céleri rémoulade, saumon", ingredients: [], categories: [], moment: ["soir"] },
+          { id: "rec_sb2_soir_fb_saumon", nom: "Fromage blanc, saumon", ingredients: [], categories: [], moment: ["soir"] },
+        ];
+        const mergedRecettes = [...(lib.recettes || [])];
+        seedRecettes.forEach((r) => {
+          if (!mergedRecettes.some((e) => e.id === r.id)) mergedRecettes.push(r);
+        });
+
+        const grille = emptyDetailedPlanGrille();
+        grille.samedi.matin = "rec_sb2_m_skyr";
+        grille.dimanche.matin = "rec_sb2_m_fb";
+        grille.dimanche.soir = "rec_sb2_soir_tomate_thon";
+        grille.lundi.matin = "rec_sb2_m_skyr";
+        grille.lundi.midi = "rec_sb2_midi_boeuf";
+        grille.mardi.matin = "rec_sb2_m_kiwi";
+        grille.mardi.midi = "rec_sb2_midi_quiche";
+        grille.mardi.soir = "rec_sb2_soir_celeri_saumon";
+        grille.mercredi.matin = "rec_sb2_m_fb_pomme";
+        grille.mercredi.midi = "rec_sb2_midi_steak";
+        grille.jeudi.matin = "rec_sb2_m_skyr";
+        grille.vendredi.matin = "rec_sb2_m_skyr_kiwi";
+        grille.vendredi.soir = "rec_sb2_soir_fb_saumon";
+
+        lib.recettes = mergedRecettes;
+        lib.plansAlimentairesDetailes = [...(lib.plansAlimentairesDetailes || []), { id: "plan_sylvie_bataille2", nom: "Sylvie Bataille", grille }];
+        try { await window.storage.set(LIBRARY_KEY, JSON.stringify(lib), true); } catch (e) {}
+      }
+
       setLibrary(lib);
       setLibraryLoaded(true);
     })();
