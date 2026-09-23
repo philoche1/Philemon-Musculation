@@ -6414,11 +6414,13 @@ function emptyDetailedPlanGrille() {
   return g;
 }
 
-// Schéma d'assiette en lecture seule : met en valeur les catégories d'une
-// recette. Le cercle garde la proportion officielle de l'assiette équilibrée
-// (1/2 légumes, 1/4 protéines, 1/4 glucides) ; les fruits ne sont pas une part
-// de l'assiette (méthode nutritionnelle) donc ils s'affichent à part, en pastille.
-function RecetteAssiette({ categories = [], size = 140 }) {
+// Schéma d'assiette : met en valeur les catégories d'une recette. Le cercle
+// garde la proportion officielle de l'assiette équilibrée (1/2 légumes, 1/4
+// protéines, 1/4 glucides) ; les fruits ne sont pas une part de l'assiette
+// (méthode nutritionnelle) donc ils s'affichent à part, en pastille. Si
+// onToggle est fourni, cliquer sur une zone ou la pastille bascule la
+// catégorie correspondante (synchronisé avec les cases à cocher).
+function RecetteAssiette({ categories = [], size = 140, onToggle = null }) {
   const cx = 150, cy = 150, r = 120;
   const vegPath = describePlateSlice(cx, cy, r, 0, 180);
   const proteinPath = describePlateSlice(cx, cy, r, 180, 270);
@@ -6431,17 +6433,27 @@ function RecetteAssiette({ categories = [], size = 140 }) {
   const hasFruits = categories.includes("fruits");
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, flexShrink: 0 }}>
-      <svg width={size} height={size} viewBox="0 0 300 300" xmlns="http://www.w3.org/2000/svg" style={{ background: COLORS.bg }}>
+      <svg width={size} height={size} viewBox="0 0 300 300" xmlns="http://www.w3.org/2000/svg" style={{ background: "transparent" }}>
         <circle cx={cx} cy={cy} r={r + 6} fill="none" stroke={COLORS.cardBorder} strokeWidth="2" />
         {slices.map((s) => (
-          <path key={s.key} d={s.path} fill={s.color} stroke={COLORS.bg} strokeWidth="3" opacity={categories.includes(s.key) ? 1 : 0.12} />
+          <path
+            key={s.key}
+            d={s.path}
+            fill={s.color}
+            stroke={COLORS.card}
+            strokeWidth="3"
+            opacity={categories.includes(s.key) ? 1 : 0.12}
+            style={onToggle ? { cursor: "pointer" } : undefined}
+            onClick={onToggle ? () => onToggle(s.key) : undefined}
+          />
         ))}
       </svg>
-      <div style={{ display: "flex", alignItems: "center", opacity: hasFruits ? 1 : 0.3 }}>
+      <div
+        style={{ display: "flex", alignItems: "center", opacity: hasFruits ? 1 : 0.3, cursor: onToggle ? "pointer" : "default" }}
+        onClick={onToggle ? () => onToggle("fruits") : undefined}
+      >
         <svg width="56" height="56" viewBox="0 0 24 24" style={{ flexShrink: 0 }}>
-          <path d="M12 8.5c-2.9 0-5 2.3-5 5.6 0 3.3 2.2 6.4 4 6.4.8 0 1-.4 1.7-.4s.9.4 1.7.4c1.8 0 4-3.1 4-6.4 0-3.3-2.1-5.6-4-5.6-.7 0-1.2.3-1.7.3s-1-.3-1.7-.3z" fill="#E091C4" />
-          <path d="M12.3 8.2c-.2-1.4.6-2.7 1.9-3.2" fill="none" stroke="#8C5A3B" strokeWidth="1" strokeLinecap="round" />
-          <path d="M12.1 5.2c1-.6 2.1.2 2.1 1.3" fill="none" stroke="#5CB85C" strokeWidth="1.4" strokeLinecap="round" />
+          <path d="M12 8.5c-2.9 0-5 2.3-5 5.6 0 3.3 2.2 6.4 4 6.4.8 0 1-.4 1.7-.4s.9.4 1.7.4c1.8 0 4-3.1 4-6.4 0-3.3-2.1-5.6-4-5.6-.7 0-1.2.3-1.7.3s-1-.3-1.7-.3z" fill="#5CB85C" />
         </svg>
       </div>
     </div>
@@ -6766,7 +6778,7 @@ function DetailedMealPlanSection({ data, persistLibrary, activeClient, assignDet
                         {cat.label}
                       </label>
                     ))}
-                    <RecetteAssiette categories={recetteDraft.categories} size={70} />
+                    <RecetteAssiette categories={recetteDraft.categories} size={70} onToggle={toggleDraftCategory} />
                   </div>
                   <div style={{ display: "flex", gap: 8 }}>
                     <button style={styles.primaryBtn} onClick={saveRecette}>Enregistrer</button>
@@ -7396,10 +7408,8 @@ function AlimentationView({ clientId, role, data, persistLibrary, activeClient, 
             // Icône d'un fruit entier, pour rappeler visuellement qu'une
             // portion = un fruit, plutôt que "remplir" la moitié de l'assiette
             // d'une couleur pleine : c'est le fruit qui est rose, pas l'assiette.
-            <g transform="translate(39, 89) scale(5.1)" style={{ pointerEvents: "none" }}>
-              <path d="M12 8.5c-2.9 0-5 2.3-5 5.6 0 3.3 2.2 6.4 4 6.4.8 0 1-.4 1.7-.4s.9.4 1.7.4c1.8 0 4-3.1 4-6.4 0-3.3-2.1-5.6-4-5.6-.7 0-1.2.3-1.7.3s-1-.3-1.7-.3z" fill="#E091C4" />
-              <path d="M12.3 8.2c-.2-1.4.6-2.7 1.9-3.2" fill="none" stroke="#8C5A3B" strokeWidth="1" strokeLinecap="round" />
-              <path d="M12.1 5.2c1-.6 2.1.2 2.1 1.3" fill="none" stroke="#5CB85C" strokeWidth="1.4" strokeLinecap="round" />
+            <g transform="translate(149, 89) scale(5.1)" style={{ pointerEvents: "none" }}>
+              <path d="M12 8.5c-2.9 0-5 2.3-5 5.6 0 3.3 2.2 6.4 4 6.4.8 0 1-.4 1.7-.4s.9.4 1.7.4c1.8 0 4-3.1 4-6.4 0-3.3-2.1-5.6-4-5.6-.7 0-1.2.3-1.7.3s-1-.3-1.7-.3z" fill="#5CB85C" />
             </g>
           )}
           {sections.map((section) =>
