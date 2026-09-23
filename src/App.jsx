@@ -499,6 +499,7 @@ export default function App() {
         if (!lib.recettes) lib.recettes = [];
         if (!lib.plansAlimentairesDetailes) lib.plansAlimentairesDetailes = [];
       }
+
       setLibrary(lib);
       setLibraryLoaded(true);
     })();
@@ -883,6 +884,15 @@ const refreshProspects = useCallback(async () => {
     try { await window.storage.set(CLIENTS_KEY, JSON.stringify(newClients), true); } catch (e) {}
   }, [clientId, clients]);
 
+  const updateFoodExclusions = useCallback(async (text) => {
+    if (!clientId) return;
+    const newClients = clients.map((c) =>
+      c.id === clientId ? { ...c, foodExclusions: text || "" } : c
+    );
+    setClients(newClients);
+    try { await window.storage.set(CLIENTS_KEY, JSON.stringify(newClients), true); } catch (e) {}
+  }, [clientId, clients]);
+
   const assignAccompagnementPresentiel = useCallback(async (total) => {
     if (!clientId) return;
     const newClients = clients.map((c) =>
@@ -1171,7 +1181,7 @@ bookings={bookings}
             )}
             {view === "progression" && <ProgressionView data={data} />}
             {view === "ct" && <CTView data={data} activeClient={activeClient} clientId={clientId} role={roleEffectif} persistLibrary={persistLibrary} />}
-            {view === "alimentation" && <AlimentationView clientId={clientId} role={roleEffectif} data={data} persistLibrary={persistLibrary} activeClient={activeClient} assignMealPlan={assignMealPlan} assignDetailedMealPlan={assignDetailedMealPlan} />}
+            {view === "alimentation" && <AlimentationView clientId={clientId} role={roleEffectif} data={data} persistLibrary={persistLibrary} activeClient={activeClient} assignMealPlan={assignMealPlan} assignDetailedMealPlan={assignDetailedMealPlan} updateFoodExclusions={updateFoodExclusions} />}
             {view === "documents" && <DocumentsView clientId={clientId} role={roleEffectif} activeClient={activeClient} />}
             {view === "programmes" && (
               <ProgrammesView
@@ -6458,7 +6468,7 @@ function RecetteDetailModal({ recette, onClose }) {
 // Gère la bibliothèque de recettes, la bibliothèque de plans alimentaires
 // détaillés (tableau semaine complet), leur assignation au client, et
 // l'affichage du plan assigné. Système séparé des "Plans 1-5" plus simples.
-function DetailedMealPlanSection({ data, persistLibrary, activeClient, assignDetailedMealPlan, isCoach }) {
+function DetailedMealPlanSection({ data, persistLibrary, activeClient, assignDetailedMealPlan, updateFoodExclusions, isCoach, role }) {
   const recettes = data.recettes || [];
   const plans = data.plansAlimentairesDetailes || [];
   const recettesMap = {};
@@ -6471,6 +6481,101 @@ function DetailedMealPlanSection({ data, persistLibrary, activeClient, assignDet
   const [editingPlanId, setEditingPlanId] = useState(null);
   const [planDraft, setPlanDraft] = useState(null);
   const [detailRecette, setDetailRecette] = useState(null);
+
+  const [exclusionsDraft, setExclusionsDraft] = useState(activeClient ? activeClient.foodExclusions || "" : "");
+  useEffect(() => {
+    setExclusionsDraft(activeClient ? activeClient.foodExclusions || "" : "");
+  }, [activeClient && activeClient.id]);
+  const saveExclusions = () => {
+    if (updateFoodExclusions && activeClient && exclusionsDraft !== (activeClient.foodExclusions || "")) {
+      updateFoodExclusions(exclusionsDraft);
+    }
+  };
+
+  const [generating, setGenerating] = useState(false);
+  const [genError, setGenError] = useState("");
+  const selectedSimplePlan = activeClient ? MEAL_PLANS.find((p) => p.id === activeClient.mealPlanId) : null;
+
+  const mealCategoriesForIA = (mealArr) => {
+    const mapped = (mealArr || []).map((c) => (c === "fruits" ? "glucides" : c));
+    return Array.from(new Set(mapped)).filter((c) => CATEGORIES_ASSIETTE.some((cat) => cat.key === c));
+  };
+
+  const generatePlanWithIA = async () => {
+    if (!activeClient || !selectedSimplePlan) return;
+    setGenError("");
+    setGenerating(true);
+    try {
+      const mealRules = {
+        matin: mealCategoriesForIA(selectedSimplePlan.meals.matin),
+        midi: mealCategoriesForIA(selectedSimplePlan.meals.midi),
+        gouter: mealCategoriesForIA(selectedSimplePlan.meals.gouter),
+        soir: mealCategoriesForIA(selectedSimplePlan.meals.soir),
+      };
+      const res = await fetch("/api/generate-meal-plan", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${getCoachToken()}`,
+        },
+        body: JSON.stringify({
+          planName: selectedSimplePlan.name,
+          planDescription: selectedSimplePlan.description,
+          mealRules,
+          exclusions: activeClient.foodExclusions || "",
+        }),
+      });
+      if (!res.ok) throw new Error("Échec de la génération");
+      const json = await res.json();
+      if (!json || !Array.isArray(json.recettes) || !json.grille) throw new Error("Réponse invalide");
+
+      // Ajoute les recettes générées à la bibliothèque (en réutilisant une
+      // recette existante si le nom correspond déjà exactement).
+      const newRecettes = [...recettes];
+      const indexToId = json.recettes.map((r) => {
+        const nom = (r.nom || "").trim();
+        const existing = newRecettes.find((e) => e.nom.trim().toLowerCase() === nom.toLowerCase());
+        if (existing) return existing.id;
+        const id = uid("rec");
+        newRecettes.push({
+          id,
+          nom,
+          ingredients: Array.isArray(r.ingredients) ? r.ingredients : [],
+          categories: Array.isArray(r.categories) ? r.categories.filter((c) => CATEGORIES_ASSIETTE.some((cat) => cat.key === c)) : [],
+        });
+        return id;
+      });
+
+      const grille = emptyDetailedPlanGrille();
+      JOURS_SEMAINE.forEach(({ key: jour }) => {
+        const jourGrille = json.grille[jour] || {};
+        REPAS_SEMAINE.forEach(({ key: repas }) => {
+          const idx = jourGrille[repas];
+          grille[jour][repas] = typeof idx === "number" && indexToId[idx] ? indexToId[idx] : null;
+        });
+      });
+
+      const planName = `Plan personnalisé · ${new Date().toLocaleDateString("fr-FR")}`;
+      const newPlan = { id: uid("plan"), nom: planName, grille };
+      persistLibrary({
+        exercises: data.exercises,
+        seanceTypes: data.seanceTypes,
+        programs: data.programs,
+        ctTypes: data.ctTypes,
+        ctPrograms: data.ctPrograms,
+        alimentationVideos: data.alimentationVideos,
+        ctLevelNames: data.ctLevelNames,
+        recettes: newRecettes,
+        plansAlimentairesDetailes: [...plans, newPlan],
+      });
+      setShowPlans(true);
+      setEditingPlanId(null);
+      setPlanDraft(null);
+    } catch (e) {
+      setGenError("La génération a échoué, réessaie.");
+    }
+    setGenerating(false);
+  };
 
   const saveLibraryPatch = (patch) => {
     persistLibrary({
@@ -6564,6 +6669,44 @@ function DetailedMealPlanSection({ data, persistLibrary, activeClient, assignDet
       <div style={{ fontSize: 11, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 10 }}>
         Plan alimentaire détaillé de la semaine
       </div>
+
+      {activeClient && (
+        <div style={{ marginBottom: 16 }}>
+          <label style={{ fontSize: 12, color: COLORS.textDim, display: "block", marginBottom: 6 }}>
+            Aliments à exclure (aversions, allergies, intolérances)
+          </label>
+          <AutoGrowTextarea
+            value={exclusionsDraft}
+            onChange={(e) => setExclusionsDraft(e.target.value)}
+            onBlur={saveExclusions}
+            placeholder="Ex : fruits de mer, arachides, champignons..."
+            style={{ ...styles.textInput, minHeight: 44, marginBottom: 0 }}
+          />
+        </div>
+      )}
+
+      {isCoach && activeClient && (
+        <div style={{ marginBottom: 16, padding: "12px 14px", background: COLORS.bg2, borderRadius: 8, border: `1px solid ${COLORS.cardBorder}` }}>
+          <div style={{ fontSize: 13, color: COLORS.text, fontWeight: 600, marginBottom: 4 }}>Génération automatique par IA</div>
+          {selectedSimplePlan ? (
+            <div style={{ fontSize: 12, color: COLORS.textDim, marginBottom: 10 }}>
+              Basée sur le plan choisi ci-dessus : <strong>{selectedSimplePlan.name}</strong> ({selectedSimplePlan.description}), en tenant compte des aliments exclus renseignés juste au-dessus.
+            </div>
+          ) : (
+            <div style={{ fontSize: 12, color: COLORS.textFaint, marginBottom: 10 }}>
+              Choisis d'abord un Plan (1 à 5) pour ce client ci-dessous pour définir les proportions de chaque repas, puis reviens générer le plan détaillé.
+            </div>
+          )}
+          <button
+            style={styles.primaryBtn}
+            onClick={generatePlanWithIA}
+            disabled={!selectedSimplePlan || generating}
+          >
+            {generating ? "Génération en cours..." : "🤖 Générer le plan détaillé avec l'IA"}
+          </button>
+          {genError && <div style={{ fontSize: 12, color: COLORS.danger, marginTop: 8 }}>{genError}</div>}
+        </div>
+      )}
 
       {isCoach && (
         <div style={{ marginBottom: 14 }}>
@@ -6769,7 +6912,7 @@ function DetailedMealPlanSection({ data, persistLibrary, activeClient, assignDet
   );
 }
 
-function AlimentationView({ clientId, role, data, persistLibrary, activeClient, assignMealPlan, assignDetailedMealPlan }) {
+function AlimentationView({ clientId, role, data, persistLibrary, activeClient, assignMealPlan, assignDetailedMealPlan, updateFoodExclusions }) {
   const cx = 150;
   const cy = 150;
   const r = 120;
@@ -6880,13 +7023,14 @@ function AlimentationView({ clientId, role, data, persistLibrary, activeClient, 
       const filtered = (photos || []).filter((p) => !(p.date === selectedDate && p.repas === mealTime));
       await persistPhotos([entry, ...filtered]);
       if (role === "client") {
-        fetch("/api/photo-notification", {
+        fetch("/api/welcome-email", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${getClientToken()}`,
           },
           body: JSON.stringify({
+            type: "photo",
             clientName: activeClient ? activeClient.name : "Un client",
             date: selectedDate,
             repas: mealTime,
@@ -7166,7 +7310,9 @@ function AlimentationView({ clientId, role, data, persistLibrary, activeClient, 
         persistLibrary={persistLibrary}
         activeClient={activeClient}
         assignDetailedMealPlan={assignDetailedMealPlan}
+        updateFoodExclusions={updateFoodExclusions}
         isCoach={isCoach}
+        role={role}
       />
 
       <div style={{ marginBottom: 12 }}>
