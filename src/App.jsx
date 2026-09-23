@@ -6570,17 +6570,30 @@ function DetailedMealPlanSection({ data, persistLibrary, activeClient, assignDet
           nom,
           ingredients: Array.isArray(r.ingredients) ? r.ingredients : [],
           categories: Array.isArray(r.categories) ? r.categories.filter((c) => CATEGORIES_ASSIETTE.some((cat) => cat.key === c)) : [],
+          moment: [],
         });
         return id;
       });
 
       const grille = emptyDetailedPlanGrille();
+      const momentUsage = {};
       JOURS_SEMAINE.forEach(({ key: jour }) => {
         const jourGrille = json.grille[jour] || {};
         REPAS_SEMAINE.forEach(({ key: repas }) => {
           const idx = jourGrille[repas];
-          grille[jour][repas] = typeof idx === "number" && indexToId[idx] ? indexToId[idx] : null;
+          const recId = typeof idx === "number" && indexToId[idx] ? indexToId[idx] : null;
+          grille[jour][repas] = recId;
+          if (recId) {
+            if (!momentUsage[recId]) momentUsage[recId] = new Set();
+            momentUsage[recId].add(repas);
+          }
         });
+      });
+      // Catégorise chaque recette générée par le(s) moment(s) de la journée
+      // où elle a été utilisée dans ce plan.
+      Object.keys(momentUsage).forEach((recId) => {
+        const rec = newRecettes.find((r) => r.id === recId);
+        if (rec) rec.moment = Array.from(new Set([...(rec.moment || []), ...momentUsage[recId]]));
       });
 
       const planName = `Plan personnalisé · ${new Date().toLocaleDateString("fr-FR")}`;
@@ -6621,12 +6634,16 @@ function DetailedMealPlanSection({ data, persistLibrary, activeClient, assignDet
   };
 
   // --- Recettes ---
+  // Enregistrement automatique (comme pour les séances) : chaque changement
+  // se sauvegarde tout seul après une courte pause, et un éventuel changement
+  // non encore sauvegardé est aussi enregistré immédiatement si on ferme la
+  // fiche ou qu'on passe à une autre recette avant la fin de cette pause.
   const startNewRecette = () => {
-    setRecetteDraft({ id: null, nom: "", ingredientsText: "", categories: [] });
+    setRecetteDraft({ id: null, nom: "", ingredientsText: "", categories: [], moment: [] });
     setEditingRecetteId("new");
   };
   const startEditRecette = (r) => {
-    setRecetteDraft({ id: r.id, nom: r.nom, ingredientsText: (r.ingredients || []).join("\n"), categories: r.categories || [] });
+    setRecetteDraft({ id: r.id, nom: r.nom, ingredientsText: (r.ingredients || []).join("\n"), categories: r.categories || [], moment: r.moment || [] });
     setEditingRecetteId(r.id);
   };
   const toggleDraftCategory = (key) => {
@@ -6635,19 +6652,41 @@ function DetailedMealPlanSection({ data, persistLibrary, activeClient, assignDet
       categories: d.categories.includes(key) ? d.categories.filter((c) => c !== key) : [...d.categories, key],
     }));
   };
-  const saveRecette = () => {
-    const nom = recetteDraft.nom.trim();
-    if (!nom) return;
-    const ingredients = recetteDraft.ingredientsText.split("\n").map((s) => s.trim()).filter(Boolean);
-    if (editingRecetteId === "new") {
-      const newRecette = { id: uid("rec"), nom, ingredients, categories: recetteDraft.categories };
-      saveLibraryPatch({ recettes: [...recettes, newRecette] });
-    } else {
-      saveLibraryPatch({ recettes: recettes.map((r) => (r.id === editingRecetteId ? { ...r, nom, ingredients, categories: recetteDraft.categories } : r)) });
-    }
-    setEditingRecetteId(null);
-    setRecetteDraft(null);
+  const toggleDraftMoment = (key) => {
+    setRecetteDraft((d) => ({
+      ...d,
+      moment: d.moment.includes(key) ? d.moment.filter((m) => m !== key) : [...d.moment, key],
+    }));
   };
+  const commitRecette = (draft, id) => {
+    if (!draft) return;
+    const nom = draft.nom.trim();
+    if (!nom) return;
+    const ingredients = draft.ingredientsText.split("\n").map((s) => s.trim()).filter(Boolean);
+    if (id === "new") {
+      const newId = uid("rec");
+      saveLibraryPatch({ recettes: [...recettes, { id: newId, nom, ingredients, categories: draft.categories, moment: draft.moment }] });
+      setEditingRecetteId(newId);
+    } else {
+      saveLibraryPatch({ recettes: recettes.map((r) => (r.id === id ? { ...r, nom, ingredients, categories: draft.categories, moment: draft.moment } : r)) });
+    }
+  };
+  const recetteDraftRef = useRef({ draft: null, id: null });
+  useEffect(() => {
+    recetteDraftRef.current = { draft: recetteDraft, id: editingRecetteId };
+  }, [recetteDraft, editingRecetteId]);
+  useEffect(() => {
+    if (!editingRecetteId || !recetteDraft) return;
+    const t = setTimeout(() => commitRecette(recetteDraft, editingRecetteId), 700);
+    return () => clearTimeout(t);
+  }, [recetteDraft, editingRecetteId]);
+  useEffect(() => {
+    return () => {
+      const { draft, id } = recetteDraftRef.current;
+      if (id && draft) commitRecette(draft, id);
+    };
+  }, [editingRecetteId]);
+
   const deleteRecette = (id) => {
     if (!window.confirm("Supprimer cette recette ? Elle sera retirée des plans qui l'utilisent.")) return;
     const newPlans = plans.map((p) => {
@@ -6662,7 +6701,7 @@ function DetailedMealPlanSection({ data, persistLibrary, activeClient, assignDet
     saveLibraryPatch({ recettes: recettes.filter((r) => r.id !== id), plansAlimentairesDetailes: newPlans });
   };
 
-  // --- Plans ---
+  // --- Plans --- (même principe d'enregistrement automatique que les recettes)
   const startNewPlan = () => {
     setPlanDraft({ id: null, nom: "", grille: emptyDetailedPlanGrille() });
     setEditingPlanId("new");
@@ -6674,17 +6713,34 @@ function DetailedMealPlanSection({ data, persistLibrary, activeClient, assignDet
   const updatePlanCell = (jour, repas, value) => {
     setPlanDraft((d) => ({ ...d, grille: { ...d.grille, [jour]: { ...d.grille[jour], [repas]: value } } }));
   };
-  const savePlan = () => {
-    const nom = planDraft.nom.trim();
+  const commitPlan = (draft, id) => {
+    if (!draft) return;
+    const nom = draft.nom.trim();
     if (!nom) return;
-    if (editingPlanId === "new") {
-      saveLibraryPatch({ plansAlimentairesDetailes: [...plans, { id: uid("plan"), nom, grille: planDraft.grille }] });
+    if (id === "new") {
+      const newId = uid("plan");
+      saveLibraryPatch({ plansAlimentairesDetailes: [...plans, { id: newId, nom, grille: draft.grille }] });
+      setEditingPlanId(newId);
     } else {
-      saveLibraryPatch({ plansAlimentairesDetailes: plans.map((p) => (p.id === editingPlanId ? { ...p, nom, grille: planDraft.grille } : p)) });
+      saveLibraryPatch({ plansAlimentairesDetailes: plans.map((p) => (p.id === id ? { ...p, nom, grille: draft.grille } : p)) });
     }
-    setEditingPlanId(null);
-    setPlanDraft(null);
   };
+  const planDraftRef = useRef({ draft: null, id: null });
+  useEffect(() => {
+    planDraftRef.current = { draft: planDraft, id: editingPlanId };
+  }, [planDraft, editingPlanId]);
+  useEffect(() => {
+    if (!editingPlanId || !planDraft) return;
+    const t = setTimeout(() => commitPlan(planDraft, editingPlanId), 700);
+    return () => clearTimeout(t);
+  }, [planDraft, editingPlanId]);
+  useEffect(() => {
+    return () => {
+      const { draft, id } = planDraftRef.current;
+      if (id && draft) commitPlan(draft, id);
+    };
+  }, [editingPlanId]);
+
   const deletePlan = (id) => {
     if (!window.confirm("Supprimer ce plan alimentaire ?")) return;
     saveLibraryPatch({ plansAlimentairesDetailes: plans.filter((p) => p.id !== id) });
@@ -6745,7 +6801,14 @@ function DetailedMealPlanSection({ data, persistLibrary, activeClient, assignDet
             <div style={{ marginTop: 10, padding: "10px 12px", background: COLORS.bg2, borderRadius: 8, border: `1px solid ${COLORS.cardBorder}` }}>
               {recettes.map((r) => (
                 <div key={r.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "6px 0", borderBottom: `1px solid ${COLORS.cardBorder}` }}>
-                  <span style={{ fontSize: 13, color: COLORS.text }}>{r.nom}</span>
+                  <div>
+                    <div style={{ fontSize: 13, color: COLORS.text }}>{r.nom}</div>
+                    {(r.moment || []).length > 0 && (
+                      <div style={{ fontSize: 11, color: COLORS.textFaint }}>
+                        {r.moment.map((mk) => REPAS_SEMAINE.find((m) => m.key === mk)?.label || mk).join(", ")}
+                      </div>
+                    )}
+                  </div>
                   <div style={{ display: "flex", gap: 10, flexShrink: 0 }}>
                     <button style={styles.linkBtn} onClick={() => startEditRecette(r)}>Modifier</button>
                     <button style={{ ...styles.linkBtn, color: COLORS.danger }} onClick={() => deleteRecette(r.id)}>Supprimer</button>
@@ -6780,10 +6843,17 @@ function DetailedMealPlanSection({ data, persistLibrary, activeClient, assignDet
                     ))}
                     <RecetteAssiette categories={recetteDraft.categories} size={70} onToggle={toggleDraftCategory} />
                   </div>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <button style={styles.primaryBtn} onClick={saveRecette}>Enregistrer</button>
-                    <button style={styles.linkBtn} onClick={() => { setEditingRecetteId(null); setRecetteDraft(null); }}>Annuler</button>
+                  <label style={{ fontSize: 12, color: COLORS.textDim, display: "block", marginBottom: 6 }}>Moment de la journée</label>
+                  <div style={{ display: "flex", gap: 14, marginBottom: 14, flexWrap: "wrap" }}>
+                    {REPAS_SEMAINE.map((m) => (
+                      <label key={m.key} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, color: COLORS.textDim, cursor: "pointer" }}>
+                        <input type="checkbox" checked={recetteDraft.moment.includes(m.key)} onChange={() => toggleDraftMoment(m.key)} />
+                        {m.label}
+                      </label>
+                    ))}
                   </div>
+                  <div style={{ fontSize: 11, color: COLORS.textFaint, marginBottom: 10 }}>Enregistrement automatique.</div>
+                  <button style={styles.linkBtn} onClick={() => { setEditingRecetteId(null); setRecetteDraft(null); }}>Fermer</button>
                 </div>
               ) : (
                 <button style={{ ...styles.secondaryBtn, marginTop: 10 }} onClick={startNewRecette}>+ Nouvelle recette</button>
@@ -6853,9 +6923,11 @@ function DetailedMealPlanSection({ data, persistLibrary, activeClient, assignDet
                                   style={{ ...styles.textInput, marginBottom: 0, fontSize: 12, minWidth: 130 }}
                                 >
                                   <option value="">—</option>
-                                  {recettes.map((r) => (
-                                    <option key={r.id} value={r.id}>{r.nom}</option>
-                                  ))}
+                                  {recettes
+                                    .filter((r) => !r.moment || r.moment.length === 0 || r.moment.includes(m.key))
+                                    .map((r) => (
+                                      <option key={r.id} value={r.id}>{r.nom}</option>
+                                    ))}
                                 </select>
                               </td>
                             ))}
@@ -6873,10 +6945,8 @@ function DetailedMealPlanSection({ data, persistLibrary, activeClient, assignDet
                       </tbody>
                     </table>
                   </div>
-                  <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-                    <button style={styles.primaryBtn} onClick={savePlan}>Enregistrer</button>
-                    <button style={styles.linkBtn} onClick={() => { setEditingPlanId(null); setPlanDraft(null); }}>Annuler</button>
-                  </div>
+                  <div style={{ fontSize: 11, color: COLORS.textFaint, marginTop: 10, marginBottom: 6 }}>Enregistrement automatique.</div>
+                  <button style={styles.linkBtn} onClick={() => { setEditingPlanId(null); setPlanDraft(null); }}>Fermer</button>
                 </div>
               ) : (
                 <button style={{ ...styles.secondaryBtn, marginTop: 10 }} onClick={startNewPlan}>+ Nouveau plan</button>
