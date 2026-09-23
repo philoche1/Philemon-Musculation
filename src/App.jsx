@@ -5262,6 +5262,10 @@ const FRUITS_IDEAS = [
   "Framboises",
 ];
 
+// Le matin, on retire les fruits à IG élevé (banane, raisin, figue) pour
+// limiter le pic glycémique en début de journée.
+const MATIN_FRUITS_IDEAS = FRUITS_IDEAS.filter((f) => !["Banane", "Raisin", "Figue"].includes(f));
+
 const GLUCIDES_IDEAS_DEFAULT = [
   "Riz complet",
   "Quinoa",
@@ -5324,7 +5328,7 @@ function getAlimentationSections(mealTime) {
       subtitle: "La moitié de l'assiette",
       color: isFruitMode ? "#E091C4" : "#5CB85C",
       colorStroke: isFruitMode ? "#9C3D7A" : "#2E7D32",
-      ideas: isFruitMode ? FRUITS_IDEAS : LEGUMES_IDEAS,
+      ideas: isFruitMode ? (mealTime === "matin" ? MATIN_FRUITS_IDEAS : FRUITS_IDEAS) : LEGUMES_IDEAS,
     },
     {
       key: "proteines",
@@ -7381,7 +7385,7 @@ function AlimentationView({ clientId, role, data, persistLibrary, activeClient, 
             <path
               key={section.key}
               d={slicePaths[section.key]}
-              fill={section.color}
+              fill={mealTime === "matin" && section.key === "legumes" ? COLORS.bg2 : section.color}
               stroke={COLORS.bg}
               strokeWidth="3"
               opacity={openSection && openSection !== section.key ? 0.45 : 1}
@@ -7389,6 +7393,16 @@ function AlimentationView({ clientId, role, data, persistLibrary, activeClient, 
               onClick={() => toggleSection(section.key)}
             />
           ))}
+          {mealTime === "matin" && (
+            // Icône d'un fruit entier, pour rappeler visuellement qu'une
+            // portion = un fruit, plutôt que "remplir" la moitié de l'assiette
+            // d'une couleur pleine : c'est le fruit qui est rose, pas l'assiette.
+            <g transform="translate(114, 139) scale(3)" style={{ pointerEvents: "none" }}>
+              <path d="M12 8.5c-2.9 0-5 2.3-5 5.6 0 3.3 2.2 6.4 4 6.4.8 0 1-.4 1.7-.4s.9.4 1.7.4c1.8 0 4-3.1 4-6.4 0-3.3-2.1-5.6-4-5.6-.7 0-1.2.3-1.7.3s-1-.3-1.7-.3z" fill="#E091C4" />
+              <path d="M12.3 8.2c-.2-1.4.6-2.7 1.9-3.2" fill="none" stroke="#8C5A3B" strokeWidth="1" strokeLinecap="round" />
+              <path d="M12.1 5.2c1-.6 2.1.2 2.1 1.3" fill="none" stroke="#5CB85C" strokeWidth="1.4" strokeLinecap="round" />
+            </g>
+          )}
           {sections.map((section) =>
             selected[section.key].length > 0 ? (
               <text
