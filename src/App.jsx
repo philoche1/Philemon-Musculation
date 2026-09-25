@@ -9157,8 +9157,13 @@ function NewSeanceTypeForm({ data, onCancel, onSave }) {
           disabled={!nom}
           onClick={() => {
             const { exerciceIds, niveaux } = finalizeSelection(selectedKeys, niveauxByKey, exercisesMap);
+            // Les exercices d'un circuit doivent toujours faire partie des
+            // exercices inclus, sinon ils n'existent pas dans les séances
+            // enregistrées et le circuit n'a rien à afficher.
+            const circuitExIds = mode === "distanciel" ? distancielCircuits.flatMap((c) => c.exerciceIds || []) : [];
+            const mergedExerciceIds = Array.from(new Set([...exerciceIds, ...circuitExIds]));
             onSave({
-              nom, exerciceIds, niveaux, mode, lieu: mode === "distanciel" ? lieu : null,
+              nom, exerciceIds: mergedExerciceIds, niveaux, mode, lieu: mode === "distanciel" ? lieu : null,
               distancielCircuits: mode === "distanciel" ? distancielCircuits : [],
             });
           }}
@@ -9259,8 +9264,13 @@ function EditSeanceTypeForm({ data, seanceType, onCancel, onSave }) {
           disabled={!nom}
           onClick={() => {
             const { exerciceIds, niveaux } = finalizeSelection(selectedKeys, niveauxByKey, exercisesMap);
+            // Les exercices d'un circuit doivent toujours faire partie des
+            // exercices inclus, sinon ils n'existent pas dans les séances
+            // enregistrées et le circuit n'a rien à afficher.
+            const circuitExIds = mode === "distanciel" ? distancielCircuits.flatMap((c) => c.exerciceIds || []) : [];
+            const mergedExerciceIds = Array.from(new Set([...exerciceIds, ...circuitExIds]));
             onSave({
-              nom, exerciceIds, niveaux, mode, lieu: mode === "distanciel" ? lieu : null,
+              nom, exerciceIds: mergedExerciceIds, niveaux, mode, lieu: mode === "distanciel" ? lieu : null,
               warmupWorkSeconds, warmupRestSeconds, warmupRoundRestSeconds, warmupRounds,
               distancielCircuits: mode === "distanciel" ? distancielCircuits : [],
             });
