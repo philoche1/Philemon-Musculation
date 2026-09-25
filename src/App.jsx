@@ -3855,7 +3855,8 @@ function CircuitTimer({
     <div style={styles.circuitPanel}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
         <div style={styles.circuitTitle}>{title}</div>
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+          {headerExtra}
           <span style={{ fontSize: 12, color: COLORS.textFaint }}>Tour {currentPhase.round}/{totalRounds}</span>
           {totalExercisesInRound > 0 && (
             <span style={{ fontSize: 11, color: COLORS.textFaint }}>Exercice {exerciseIndexInRound}/{totalExercisesInRound}</span>
@@ -4485,7 +4486,7 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                           🔗 Superset {supersetLabels[mySupersetId]}
                         </span>
                       )}
-                      <label style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer", fontSize: 11, fontWeight: 400, color: COLORS.textDim, whiteSpace: "nowrap" }}>
+                      <label style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer", fontSize: 11, fontWeight: 400, color: COLORS.textDim, whiteSpace: "nowrap", marginLeft: "auto" }}>
                         <input
                           type="checkbox"
                           checked={allValidatedInZone([exId])}
