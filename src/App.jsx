@@ -3621,6 +3621,7 @@ function CircuitTimer({
   customPhases = null,
   customSummary = null,
   headerExtra = null,
+  bare = false,
 }) {
   const [rounds, setRounds] = useState(defaultRounds);
   const [workSeconds, setWorkSeconds] = useState(defaultWork);
@@ -3714,7 +3715,7 @@ function CircuitTimer({
 
   if (!started) {
     return (
-      <div style={styles.circuitPanel}>
+      <div style={bare ? {} : styles.circuitPanel}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
           <div style={styles.circuitTitle}>{title}</div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -3832,7 +3833,7 @@ function CircuitTimer({
 
   if (done) {
     return (
-      <div style={styles.circuitPanel}>
+      <div style={bare ? {} : styles.circuitPanel}>
         <div style={styles.circuitTitle}>Circuit terminé 🎉</div>
         <div style={{ fontSize: 12, color: COLORS.textDim, marginBottom: 10 }}>
           {rounds} tour{rounds > 1 ? "s" : ""} sur {exerciseNames.length} exercice{exerciseNames.length > 1 ? "s" : ""} complétés.
@@ -3852,7 +3853,7 @@ function CircuitTimer({
   }
 
   return (
-    <div style={styles.circuitPanel}>
+    <div style={bare ? {} : styles.circuitPanel}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
         <div style={styles.circuitTitle}>{title}</div>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
@@ -4371,7 +4372,10 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
         <div style={{ marginTop: 14 }}>
           <SessionBilanAvantForm bilan={bilanAvant} onChange={updateBilanAvant} />
           {zoneGroups.map(([label, ids, circuitMeta], idx) => (
-            <div key={label + (circuitMeta ? "_" + circuitMeta.id : "")} style={{ marginBottom: 16 }}>
+            <div
+              key={label + (circuitMeta ? "_" + circuitMeta.id : "")}
+              style={circuitMeta ? { ...styles.circuitPanel, marginBottom: 16 } : { marginBottom: 16 }}
+            >
               {idx === debutHeaderIndex && (
                 <div style={{ ...styles.sectionHeader, marginTop: 0 }}>Début de séance</div>
               )}
@@ -4381,12 +4385,15 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
               {idx === finHeaderIndex && (
                 <div style={styles.sectionHeader}>Fin de séance</div>
               )}
-              <div style={{ fontSize: 11, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8, paddingBottom: 4, borderBottom: `1px solid ${COLORS.cardBorder}` }}>
-                {label}
-              </div>
+              {!circuitMeta && (
+                <div style={{ fontSize: 11, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8, paddingBottom: 4, borderBottom: `1px solid ${COLORS.cardBorder}` }}>
+                  {label}
+                </div>
+              )}
               {circuitMeta && ids.length > 0 && (
                 <CircuitTimer
                   key={circuitMeta.id}
+                  bare
                   title={circuitMeta.nom || "Circuit"}
                   defaultRounds={circuitMeta.rounds ?? 3}
                   defaultWork={circuitMeta.workSeconds ?? WARMUP_WORK_SECONDS}
@@ -4405,6 +4412,9 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                     </label>
                   }
                 />
+              )}
+              {circuitMeta && ids.length > 0 && (
+                <div style={{ borderTop: `1px solid ${COLORS.cardBorder}`, margin: "12px 0 14px" }} />
               )}
               {label === "Échauffement" && ids.length > 0 && !isDistanciel && (() => {
                 const computedRounds = Math.max(1, ...ids.map((id) => (grouped[id] ? grouped[id].length : WARMUP_SERIES_COUNT)));
