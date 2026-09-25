@@ -4371,10 +4371,15 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
       {expanded && (
         <div style={{ marginTop: 14 }}>
           <SessionBilanAvantForm bilan={bilanAvant} onChange={updateBilanAvant} />
-          {zoneGroups.map(([label, ids, circuitMeta], idx) => (
+          {zoneGroups.map(([label, ids, circuitMeta], idx) => {
+            const isWarmupCircuit = label === "Échauffement" && ids.length > 0 && !isDistanciel;
+            const isCardioCircuit = label === "Cardio" && ids.length > 0;
+            const isCorpsCircuit = !!circuitMeta && ids.length > 0;
+            const hasCircuitTimer = isWarmupCircuit || isCardioCircuit || isCorpsCircuit;
+            return (
             <div
               key={label + (circuitMeta ? "_" + circuitMeta.id : "")}
-              style={circuitMeta ? { ...styles.circuitPanel, marginBottom: 16 } : { marginBottom: 16 }}
+              style={hasCircuitTimer ? { ...styles.circuitPanel, marginBottom: 16 } : { marginBottom: 16 }}
             >
               {idx === debutHeaderIndex && (
                 <div style={{ ...styles.sectionHeader, marginTop: 0 }}>Début de séance</div>
@@ -4385,12 +4390,12 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
               {idx === finHeaderIndex && (
                 <div style={styles.sectionHeader}>Fin de séance</div>
               )}
-              {!circuitMeta && (
+              {!hasCircuitTimer && (
                 <div style={{ fontSize: 11, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8, paddingBottom: 4, borderBottom: `1px solid ${COLORS.cardBorder}` }}>
                   {label}
                 </div>
               )}
-              {circuitMeta && ids.length > 0 && (
+              {isCorpsCircuit && (
                 <CircuitTimer
                   key={circuitMeta.id}
                   bare
@@ -4413,15 +4418,13 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                   }
                 />
               )}
-              {circuitMeta && ids.length > 0 && (
-                <div style={{ borderTop: `1px solid ${COLORS.cardBorder}`, margin: "12px 0 14px" }} />
-              )}
-              {label === "Échauffement" && ids.length > 0 && !isDistanciel && (() => {
+              {isWarmupCircuit && (() => {
                 const computedRounds = Math.max(1, ...ids.map((id) => (grouped[id] ? grouped[id].length : WARMUP_SERIES_COUNT)));
                 const warmupRounds = (seanceType && seanceType.warmupRounds != null) ? seanceType.warmupRounds : computedRounds;
                 return (
                   <CircuitTimer
                     key={ids.join(",") + "_" + warmupRounds}
+                    bare
                     defaultRounds={warmupRounds}
                     defaultWork={(seanceType && seanceType.warmupWorkSeconds != null) ? seanceType.warmupWorkSeconds : WARMUP_WORK_SECONDS}
                     defaultRest={(seanceType && seanceType.warmupRestSeconds != null) ? seanceType.warmupRestSeconds : WARMUP_REST_SECONDS}
@@ -4441,9 +4444,10 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                   />
                 );
               })()}
-              {label === "Cardio" && ids.length > 0 && (
+              {isCardioCircuit && (
                 <CircuitTimer
                   key={ids.join(",")}
+                  bare
                   title="Circuit cardio"
                   defaultWork={CARDIO_WORK_SECONDS}
                   defaultRest={CARDIO_REST_SECONDS}
@@ -4451,6 +4455,9 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                   workInMinutes
                   exerciseNames={ids.map((id) => (exercisesAliased[id] ? exercisesAliased[id].nom.replace(/\n/g, " ") : "Exercice"))}
                 />
+              )}
+              {hasCircuitTimer && (
+                <div style={{ borderTop: `1px solid ${COLORS.cardBorder}`, margin: "12px 0 14px" }} />
               )}
               {ids.map((exId) => {
                 const realExId = grouped[exId][0].exerciceId;
@@ -5112,7 +5119,8 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                 );
               })}
             </div>
-          ))}
+            );
+          })}
 
           {isCoach && (
             <div style={{ marginBottom: 16 }}>
