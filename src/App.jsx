@@ -3255,6 +3255,7 @@ function SuiviView({ data, persistSessions, role, activeClient, deleteProgrammeH
             allSessions={data.sessions}
             programName={programNameForSeance(session.seanceNom)}
             isDistanciel={isDistancielSeance(session.seanceNom)}
+            seanceType={session.seanceNom ? data.seanceTypes.find((s) => s.nom === session.seanceNom) : null}
             role={role}
             exerciseNotes={exerciseNotes}
             onSaveNote={saveExerciseNote}
@@ -3901,7 +3902,7 @@ function groupBySeries(entries) {
 const DEFAULT_BILAN = { difficulte: null, sensation: null, douleur: "", remarque: "" };
 const DEFAULT_BILAN_AVANT = { forme: null, sommeil: null, alimentation: null, douleur: "", remarque: "" };
 
-function SessionCard({ session, exercises, allSessions, programName, isDistanciel, role, exerciseNotes, onSaveNote, expanded, onToggle, onExpand, onSave, onDelete }) {
+function SessionCard({ session, exercises, allSessions, programName, isDistanciel, seanceType, role, exerciseNotes, onSaveNote, expanded, onToggle, onExpand, onSave, onDelete }) {
   const [local, setLocal] = useState(session.entries);
   const [bilan, setBilan] = useState(session.bilan || DEFAULT_BILAN);
   const [bilanAvant, setBilanAvant] = useState(session.bilanAvant || DEFAULT_BILAN_AVANT);
@@ -3919,6 +3920,8 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
   const [swapSearch, setSwapSearch] = useState("");
   const [addingAnchorExId, setAddingAnchorExId] = useState(null);
   const [linkingExId, setLinkingExId] = useState(null);
+  const [addingAnyExercise, setAddingAnyExercise] = useState(false);
+  const [addAnySearch, setAddAnySearch] = useState("");
   const isCoach = role === "coach";
 
   // Lie deux exercices en superset/biset : ils partagent le même id de
@@ -4083,7 +4086,62 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
     const realId = grouped[key][0].exerciceId;
     if (key !== realId) exercisesAliased[key] = exercises[realId];
   });
-  const zoneGroups = groupExIdsByZone(exIds, exercisesAliased);
+  const zoneGroupsRaw = groupExIdsByZone(exIds, exercisesAliased);
+
+  // Regroupe visuellement les exercices liés en superset/biset les uns à la
+  // suite des autres, même s'ils sont de nature différente (zones distinctes,
+  // ex: abdos + mollets) : tous les membres d'un superset sont affichés juste
+  // après le premier d'entre eux (l'"ancre", celle dont la zone apparaît en
+  // premier dans l'ordre d'affichage habituel), plutôt que chacun à sa place
+  // naturelle dans sa propre zone.
+  const zoneGroups = (() => {
+    const supersetOfExId = {};
+    const membersBySuperset = {};
+    local.forEach((e) => {
+      if (!e.superset) return;
+      const gk = groupKeyOf(e);
+      if (!membersBySuperset[e.superset]) membersBySuperset[e.superset] = new Set();
+      membersBySuperset[e.superset].add(gk);
+    });
+    Object.entries(membersBySuperset).forEach(([sid, set]) => {
+      if (set.size < 2) return;
+      set.forEach((gk) => { supersetOfExId[gk] = sid; });
+    });
+    if (Object.keys(supersetOfExId).length === 0) return zoneGroupsRaw;
+
+    const zoneOfExId = {};
+    zoneGroupsRaw.forEach(([lbl, zids]) => zids.forEach((id) => { zoneOfExId[id] = lbl; }));
+
+    const membersOrdered = {};
+    exIds.forEach((exId) => {
+      const sid = supersetOfExId[exId];
+      if (!sid) return;
+      if (!membersOrdered[sid]) membersOrdered[sid] = [];
+      membersOrdered[sid].push(exId);
+    });
+    const anchorExIdBySuperset = {};
+    Object.entries(membersOrdered).forEach(([sid, members]) => {
+      const sorted = [...members].sort((a, b) => zoneRank(zoneOfExId[a]) - zoneRank(zoneOfExId[b]));
+      anchorExIdBySuperset[sid] = sorted[0];
+    });
+
+    return zoneGroupsRaw.map(([lbl, zids]) => {
+      const kept = zids.filter((id) => {
+        const sid = supersetOfExId[id];
+        if (!sid) return true;
+        return anchorExIdBySuperset[sid] === id;
+      });
+      const result = [];
+      kept.forEach((id) => {
+        result.push(id);
+        const sid = supersetOfExId[id];
+        if (sid && anchorExIdBySuperset[sid] === id) {
+          (membersOrdered[sid] || []).forEach((m) => { if (m !== id) result.push(m); });
+        }
+      });
+      return [lbl, result];
+    });
+  })();
   const CORPS_DE_SEANCE_ZONES = ["BAS DU CORPS", "HAUT DU CORPS", "CENTRE DU CORPS"];
   const FIN_DE_SEANCE_ZONES = ["Cardio", "Étirements"];
   const DEBUT_DE_SEANCE_ZONES = ["Mobilité", "Échauffement"];
@@ -4292,18 +4350,37 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
               {idx === corpsHeaderIndex && (
                 <div style={styles.sectionHeader}>Corps de séance</div>
               )}
+              {idx === corpsHeaderIndex && isDistanciel && seanceType && (seanceType.distancielCircuits || []).length > 0 && (
+                <div style={{ marginBottom: 14 }}>
+                  {seanceType.distancielCircuits.map((circuit) => (
+                    <CircuitTimer
+                      key={circuit.id}
+                      title={circuit.nom || "Circuit"}
+                      defaultRounds={circuit.rounds ?? 3}
+                      defaultWork={circuit.workSeconds ?? WARMUP_WORK_SECONDS}
+                      defaultRest={circuit.restSeconds ?? WARMUP_REST_SECONDS}
+                      defaultRoundRest={circuit.roundRestSeconds ?? WARMUP_ROUND_REST_SECONDS}
+                      exerciseNames={(circuit.exerciceIds || []).map((id) => (exercises[id] ? exercises[id].nom.replace(/\n/g, " ") : "Exercice"))}
+                    />
+                  ))}
+                </div>
+              )}
               {idx === finHeaderIndex && (
                 <div style={styles.sectionHeader}>Fin de séance</div>
               )}
               <div style={{ fontSize: 11, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8, paddingBottom: 4, borderBottom: `1px solid ${COLORS.cardBorder}` }}>
                 {label}
               </div>
-              {label === "Échauffement" && ids.length > 0 && (() => {
-                const warmupRounds = Math.max(1, ...ids.map((id) => (grouped[id] ? grouped[id].length : WARMUP_SERIES_COUNT)));
+              {label === "Échauffement" && ids.length > 0 && !isDistanciel && (() => {
+                const computedRounds = Math.max(1, ...ids.map((id) => (grouped[id] ? grouped[id].length : WARMUP_SERIES_COUNT)));
+                const warmupRounds = (seanceType && seanceType.warmupRounds != null) ? seanceType.warmupRounds : computedRounds;
                 return (
                   <CircuitTimer
                     key={ids.join(",") + "_" + warmupRounds}
                     defaultRounds={warmupRounds}
+                    defaultWork={(seanceType && seanceType.warmupWorkSeconds != null) ? seanceType.warmupWorkSeconds : WARMUP_WORK_SECONDS}
+                    defaultRest={(seanceType && seanceType.warmupRestSeconds != null) ? seanceType.warmupRestSeconds : WARMUP_REST_SECONDS}
+                    defaultRoundRest={(seanceType && seanceType.warmupRoundRestSeconds != null) ? seanceType.warmupRoundRestSeconds : WARMUP_ROUND_REST_SECONDS}
                     exerciseNames={ids.map((id) => (exercisesAliased[id] ? exercisesAliased[id].nom.replace(/\n/g, " ") : "Exercice"))}
                     headerExtra={
                       <label style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer", fontSize: 11, color: COLORS.textDim, whiteSpace: "nowrap" }}>
@@ -4982,6 +5059,77 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
               })}
             </div>
           ))}
+
+          {isCoach && (
+            <div style={{ marginBottom: 16 }}>
+              {!addingAnyExercise ? (
+                <button
+                  type="button"
+                  style={styles.secondaryBtn}
+                  onClick={() => setAddingAnyExercise(true)}
+                >
+                  + Ajouter un exercice
+                </button>
+              ) : (() => {
+                const idsDejaPresents = new Set(local.map((e) => e.exerciceId));
+                const search = addAnySearch.trim().toLowerCase();
+                const candidatIds = Object.values(exercises)
+                  .filter((cand) => !idsDejaPresents.has(cand.id))
+                  .filter((cand) => !search || exDisplayName(cand).toLowerCase().includes(search))
+                  .map((cand) => cand.id);
+                const groupedCandidats = groupExIdsByZoneMulti(candidatIds, exercises);
+                return (
+                  <div style={styles.consignesPanel}>
+                    <div style={{ fontSize: 11, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>
+                      Ajouter un exercice, quelle que soit sa nature
+                    </div>
+                    <input
+                      type="text"
+                      value={addAnySearch}
+                      onChange={(e) => setAddAnySearch(e.target.value)}
+                      placeholder="Rechercher un exercice..."
+                      style={{ ...styles.textInput, marginBottom: 8 }}
+                    />
+                    <div style={{ maxHeight: 260, overflowY: "auto" }}>
+                      {groupedCandidats.map(([label, exIds]) => (
+                        <div key={label} style={{ marginBottom: 8 }}>
+                          <div style={{ fontSize: 10, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, margin: "4px 0" }}>
+                            {label}
+                          </div>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                            {exIds.map((exId) => (
+                              <button
+                                key={exId}
+                                type="button"
+                                onClick={() => {
+                                  addExerciseToSession(exId);
+                                  setAddingAnyExercise(false);
+                                  setAddAnySearch("");
+                                }}
+                                style={{ ...styles.secondaryBtn, textAlign: "left", padding: "6px 10px" }}
+                              >
+                                {exDisplayName(exercises[exId])}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                      {groupedCandidats.length === 0 && (
+                        <div style={{ fontSize: 12, color: COLORS.textFaint }}>Aucun exercice trouvé.</div>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      style={{ ...styles.linkBtn, marginTop: 8 }}
+                      onClick={() => { setAddingAnyExercise(false); setAddAnySearch(""); }}
+                    >
+                      Annuler
+                    </button>
+                  </div>
+                );
+              })()}
+            </div>
+          )}
 
           <SessionBilanForm bilan={bilan} onChange={updateBilan} role={role} />
 
@@ -8820,12 +8968,95 @@ function TypeSeanceModeSelector({ mode, setMode, lieu, setLieu }) {
   );
 }
 
+function DistancielCircuitsEditor({ data, circuits, setCircuits }) {
+  const exercisesMap = exMap(data);
+  const grouped = groupExIdsByZoneMulti(data.exercises.map((e) => e.id), exercisesMap);
+  const addCircuit = () => {
+    setCircuits([
+      ...circuits,
+      {
+        id: uid("circ"),
+        nom: `Circuit ${circuits.length + 1}`,
+        exerciceIds: [],
+        workSeconds: WARMUP_WORK_SECONDS,
+        restSeconds: WARMUP_REST_SECONDS,
+        roundRestSeconds: WARMUP_ROUND_REST_SECONDS,
+        rounds: 3,
+      },
+    ]);
+  };
+  const duplicateCircuit = (idx) => {
+    const c = circuits[idx];
+    const copy = { ...c, id: uid("circ"), nom: (c.nom || "Circuit") + " (copie)" };
+    setCircuits([...circuits.slice(0, idx + 1), copy, ...circuits.slice(idx + 1)]);
+  };
+  const removeCircuit = (idx) => setCircuits(circuits.filter((_, i) => i !== idx));
+  const updateCircuit = (idx, patch) => setCircuits(circuits.map((c, i) => (i === idx ? { ...c, ...patch } : c)));
+  const toggleExercise = (idx, exId) => {
+    const c = circuits[idx];
+    const has = c.exerciceIds.includes(exId);
+    updateCircuit(idx, { exerciceIds: has ? c.exerciceIds.filter((x) => x !== exId) : [...c.exerciceIds, exId] });
+  };
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <label style={styles.fieldLabel}>Circuits du corps de séance</label>
+      <p style={{ fontSize: 11, color: COLORS.textFaint, marginTop: -4, marginBottom: 8 }}>
+        Chaque circuit s'enchaîne en boucle chronométrée dans l'espace client. Ajoute-en autant que nécessaire pour varier les blocs — l'échauffement, lui, reste une simple liste d'exercices de mobilité sans chrono.
+      </p>
+      {circuits.map((c, idx) => (
+        <div key={c.id} style={{ border: `1px solid ${COLORS.cardBorder}`, borderRadius: 8, padding: 10, marginBottom: 10, background: COLORS.bg2 }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8, flexWrap: "wrap" }}>
+            <input
+              style={{ ...styles.textInput, flex: 1, minWidth: 120 }}
+              value={c.nom}
+              onChange={(e) => updateCircuit(idx, { nom: e.target.value })}
+              placeholder={`Circuit ${idx + 1}`}
+            />
+            <button type="button" style={styles.linkBtn} onClick={() => duplicateCircuit(idx)}>Dupliquer</button>
+            <button type="button" style={{ ...styles.linkBtn, color: COLORS.danger }} onClick={() => removeCircuit(idx)}>Supprimer</button>
+          </div>
+          <CTSettingsFields
+            workSeconds={c.workSeconds}
+            setWorkSeconds={(v) => updateCircuit(idx, { workSeconds: v })}
+            restSeconds={c.restSeconds}
+            setRestSeconds={(v) => updateCircuit(idx, { restSeconds: v })}
+            roundRestSeconds={c.roundRestSeconds}
+            setRoundRestSeconds={(v) => updateCircuit(idx, { roundRestSeconds: v })}
+            rounds={c.rounds}
+            setRounds={(v) => updateCircuit(idx, { rounds: v })}
+          />
+          <div style={{ fontSize: 12, color: COLORS.textDim, margin: "8px 0 4px" }}>
+            Exercices du circuit ({c.exerciceIds.length})
+          </div>
+          <div style={{ ...styles.checklist, maxHeight: 220, overflowY: "auto" }}>
+            {grouped.map(([label, exIds]) => (
+              <div key={label} style={{ marginBottom: 8 }}>
+                <div style={{ fontSize: 10, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, margin: "4px 0" }}>
+                  {label}
+                </div>
+                {exIds.map((exId) => (
+                  <label key={exId} style={styles.checkItem}>
+                    <input type="checkbox" checked={c.exerciceIds.includes(exId)} onChange={() => toggleExercise(idx, exId)} />
+                    <span style={{ marginLeft: 8 }}>{exDisplayName(exercisesMap[exId])}</span>
+                  </label>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+      <button type="button" style={styles.secondaryBtn} onClick={addCircuit}>+ Ajouter un circuit</button>
+    </div>
+  );
+}
+
 function NewSeanceTypeForm({ data, onCancel, onSave }) {
   const [nom, setNom] = useState("");
   const [selectedKeys, setSelectedKeys] = useState([]);
   const [niveauxByKey, setNiveauxByKey] = useState({});
   const [mode, setMode] = useState("presentiel");
   const [lieu, setLieu] = useState("salle");
+  const [distancielCircuits, setDistancielCircuits] = useState([]);
   const toggleKey = (key) => setSelectedKeys((p) => (p.includes(key) ? p.filter((x) => x !== key) : [...p, key]));
   const exercisesMap = exMap(data);
   return (
@@ -8833,6 +9064,9 @@ function NewSeanceTypeForm({ data, onCancel, onSave }) {
       <label style={styles.fieldLabel}>Nom du type de séance</label>
       <input style={styles.textInput} value={nom} onChange={(e) => setNom(e.target.value)} placeholder="Ex: Full body E" />
       <TypeSeanceModeSelector mode={mode} setMode={setMode} lieu={lieu} setLieu={setLieu} />
+      {mode === "distanciel" && (
+        <DistancielCircuitsEditor data={data} circuits={distancielCircuits} setCircuits={setDistancielCircuits} />
+      )}
       <label style={styles.fieldLabel}>Exercices inclus</label>
       <p style={{ fontSize: 11, color: COLORS.textFaint, marginTop: -4, marginBottom: 8 }}>
         Un exercice présent dans plusieurs catégories peut être coché indépendamment dans chacune, avec son propre niveau.
@@ -8873,7 +9107,10 @@ function NewSeanceTypeForm({ data, onCancel, onSave }) {
           disabled={!nom}
           onClick={() => {
             const { exerciceIds, niveaux } = finalizeSelection(selectedKeys, niveauxByKey, exercisesMap);
-            onSave({ nom, exerciceIds, niveaux, mode, lieu: mode === "distanciel" ? lieu : null });
+            onSave({
+              nom, exerciceIds, niveaux, mode, lieu: mode === "distanciel" ? lieu : null,
+              distancielCircuits: mode === "distanciel" ? distancielCircuits : [],
+            });
           }}
         >
           Créer
@@ -8899,6 +9136,11 @@ function EditSeanceTypeForm({ data, seanceType, onCancel, onSave }) {
     });
     return niv;
   });
+  const [warmupWorkSeconds, setWarmupWorkSeconds] = useState(seanceType.warmupWorkSeconds ?? WARMUP_WORK_SECONDS);
+  const [warmupRestSeconds, setWarmupRestSeconds] = useState(seanceType.warmupRestSeconds ?? WARMUP_REST_SECONDS);
+  const [warmupRoundRestSeconds, setWarmupRoundRestSeconds] = useState(seanceType.warmupRoundRestSeconds ?? WARMUP_ROUND_REST_SECONDS);
+  const [warmupRounds, setWarmupRounds] = useState(seanceType.warmupRounds ?? 2);
+  const [distancielCircuits, setDistancielCircuits] = useState(seanceType.distancielCircuits || []);
   const toggleKey = (key) => setSelectedKeys((p) => (p.includes(key) ? p.filter((x) => x !== key) : [...p, key]));
   return (
     <div style={{ ...styles.card, borderColor: COLORS.accent2 }}>
@@ -8906,6 +9148,27 @@ function EditSeanceTypeForm({ data, seanceType, onCancel, onSave }) {
       <label style={styles.fieldLabel}>Nom du type de séance</label>
       <input style={styles.textInput} value={nom} onChange={(e) => setNom(e.target.value)} />
       <TypeSeanceModeSelector mode={mode} setMode={setMode} lieu={lieu} setLieu={setLieu} />
+      {mode !== "distanciel" && (
+        <>
+          <label style={styles.fieldLabel}>Réglages du circuit d'échauffement</label>
+          <p style={{ fontSize: 11, color: COLORS.textFaint, marginTop: -4, marginBottom: 8 }}>
+            S'applique à toutes les séances enregistrées de ce type.
+          </p>
+          <CTSettingsFields
+            workSeconds={warmupWorkSeconds}
+            setWorkSeconds={setWarmupWorkSeconds}
+            restSeconds={warmupRestSeconds}
+            setRestSeconds={setWarmupRestSeconds}
+            roundRestSeconds={warmupRoundRestSeconds}
+            setRoundRestSeconds={setWarmupRoundRestSeconds}
+            rounds={warmupRounds}
+            setRounds={setWarmupRounds}
+          />
+        </>
+      )}
+      {mode === "distanciel" && (
+        <DistancielCircuitsEditor data={data} circuits={distancielCircuits} setCircuits={setDistancielCircuits} />
+      )}
       <label style={styles.fieldLabel}>Exercices inclus</label>
       <p style={{ fontSize: 11, color: COLORS.textFaint, marginTop: -4, marginBottom: 8 }}>
         Un exercice présent dans plusieurs catégories peut être coché indépendamment dans chacune, avec son propre niveau.
@@ -8946,7 +9209,11 @@ function EditSeanceTypeForm({ data, seanceType, onCancel, onSave }) {
           disabled={!nom}
           onClick={() => {
             const { exerciceIds, niveaux } = finalizeSelection(selectedKeys, niveauxByKey, exercisesMap);
-            onSave({ nom, exerciceIds, niveaux, mode, lieu: mode === "distanciel" ? lieu : null });
+            onSave({
+              nom, exerciceIds, niveaux, mode, lieu: mode === "distanciel" ? lieu : null,
+              warmupWorkSeconds, warmupRestSeconds, warmupRoundRestSeconds, warmupRounds,
+              distancielCircuits: mode === "distanciel" ? distancielCircuits : [],
+            });
           }}
         >
           Enregistrer
