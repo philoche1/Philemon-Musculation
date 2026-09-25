@@ -4094,7 +4094,7 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
   // après le premier d'entre eux (l'"ancre", celle dont la zone apparaît en
   // premier dans l'ordre d'affichage habituel), plutôt que chacun à sa place
   // naturelle dans sa propre zone.
-  const zoneGroups = (() => {
+  const zoneGroupsAfterSupersets = (() => {
     const supersetOfExId = {};
     const membersBySuperset = {};
     local.forEach((e) => {
@@ -4142,11 +4142,38 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
       return [lbl, result];
     });
   })();
+
+  // Regroupe les exercices d'un circuit "corps de séance" (distanciel) dans
+  // une pseudo-zone dédiée à ce circuit — affichée avec son chrono suivi de
+  // ses exercices détaillés (séries, temps...) — plutôt que dispersés parmi
+  // les zones naturelles (BAS/HAUT/CENTRE DU CORPS).
+  const zoneGroups = (() => {
+    const circuits = (isDistanciel && seanceType && seanceType.distancielCircuits) || [];
+    if (circuits.length === 0) return zoneGroupsAfterSupersets;
+
+    const idsInCircuits = new Set();
+    circuits.forEach((c) => (c.exerciceIds || []).forEach((id) => idsInCircuits.add(id)));
+    if (idsInCircuits.size === 0) return zoneGroupsAfterSupersets;
+
+    const withoutCircuitIds = zoneGroupsAfterSupersets
+      .map(([lbl, zids]) => [lbl, zids.filter((id) => !idsInCircuits.has(id))])
+      .filter(([, zids]) => zids.length > 0);
+
+    const circuitGroups = circuits
+      .map((c) => [c.nom || "Circuit", (c.exerciceIds || []).filter((id) => exIds.includes(id)), c])
+      .filter(([, zids]) => zids.length > 0);
+    if (circuitGroups.length === 0) return zoneGroupsAfterSupersets;
+
+    const corpsRank = zoneRank("BAS DU CORPS");
+    const insertAtRaw = withoutCircuitIds.findIndex(([lbl]) => zoneRank(lbl) >= corpsRank);
+    const insertAt = insertAtRaw === -1 ? withoutCircuitIds.length : insertAtRaw;
+    return [...withoutCircuitIds.slice(0, insertAt), ...circuitGroups, ...withoutCircuitIds.slice(insertAt)];
+  })();
   const CORPS_DE_SEANCE_ZONES = ["BAS DU CORPS", "HAUT DU CORPS", "CENTRE DU CORPS"];
   const FIN_DE_SEANCE_ZONES = ["Cardio", "Étirements"];
   const DEBUT_DE_SEANCE_ZONES = ["Mobilité", "Échauffement"];
   const debutHeaderIndex = zoneGroups.findIndex(([label]) => DEBUT_DE_SEANCE_ZONES.includes(label));
-  const corpsHeaderIndex = zoneGroups.findIndex(([label]) => CORPS_DE_SEANCE_ZONES.includes(label));
+  const corpsHeaderIndex = zoneGroups.findIndex(([label, , circuitMeta]) => CORPS_DE_SEANCE_ZONES.includes(label) || !!circuitMeta);
   const finHeaderIndex = zoneGroups.findIndex(([label]) => FIN_DE_SEANCE_ZONES.includes(label));
 
   // Groupes superset/biset actuellement valides (au moins 2 exercices
@@ -4342,28 +4369,13 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
       {expanded && (
         <div style={{ marginTop: 14 }}>
           <SessionBilanAvantForm bilan={bilanAvant} onChange={updateBilanAvant} />
-          {zoneGroups.map(([label, ids], idx) => (
-            <div key={label} style={{ marginBottom: 16 }}>
+          {zoneGroups.map(([label, ids, circuitMeta], idx) => (
+            <div key={label + (circuitMeta ? "_" + circuitMeta.id : "")} style={{ marginBottom: 16 }}>
               {idx === debutHeaderIndex && (
                 <div style={{ ...styles.sectionHeader, marginTop: 0 }}>Début de séance</div>
               )}
               {idx === corpsHeaderIndex && (
                 <div style={styles.sectionHeader}>Corps de séance</div>
-              )}
-              {idx === corpsHeaderIndex && isDistanciel && seanceType && (seanceType.distancielCircuits || []).length > 0 && (
-                <div style={{ marginBottom: 14 }}>
-                  {seanceType.distancielCircuits.map((circuit) => (
-                    <CircuitTimer
-                      key={circuit.id}
-                      title={circuit.nom || "Circuit"}
-                      defaultRounds={circuit.rounds ?? 3}
-                      defaultWork={circuit.workSeconds ?? WARMUP_WORK_SECONDS}
-                      defaultRest={circuit.restSeconds ?? WARMUP_REST_SECONDS}
-                      defaultRoundRest={circuit.roundRestSeconds ?? WARMUP_ROUND_REST_SECONDS}
-                      exerciseNames={(circuit.exerciceIds || []).map((id) => (exercises[id] ? exercises[id].nom.replace(/\n/g, " ") : "Exercice"))}
-                    />
-                  ))}
-                </div>
               )}
               {idx === finHeaderIndex && (
                 <div style={styles.sectionHeader}>Fin de séance</div>
@@ -4371,6 +4383,28 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
               <div style={{ fontSize: 11, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8, paddingBottom: 4, borderBottom: `1px solid ${COLORS.cardBorder}` }}>
                 {label}
               </div>
+              {circuitMeta && ids.length > 0 && (
+                <CircuitTimer
+                  key={circuitMeta.id}
+                  title={circuitMeta.nom || "Circuit"}
+                  defaultRounds={circuitMeta.rounds ?? 3}
+                  defaultWork={circuitMeta.workSeconds ?? WARMUP_WORK_SECONDS}
+                  defaultRest={circuitMeta.restSeconds ?? WARMUP_REST_SECONDS}
+                  defaultRoundRest={circuitMeta.roundRestSeconds ?? WARMUP_ROUND_REST_SECONDS}
+                  exerciseNames={ids.map((id) => (exercisesAliased[id] ? exercisesAliased[id].nom.replace(/\n/g, " ") : "Exercice"))}
+                  headerExtra={
+                    <label style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer", fontSize: 11, color: COLORS.textDim, whiteSpace: "nowrap" }}>
+                      <input
+                        type="checkbox"
+                        checked={allValidatedInZone(ids)}
+                        onChange={() => toggleAllInZone(ids)}
+                        style={{ cursor: "pointer" }}
+                      />
+                      Tout valider
+                    </label>
+                  }
+                />
+              )}
               {label === "Échauffement" && ids.length > 0 && !isDistanciel && (() => {
                 const computedRounds = Math.max(1, ...ids.map((id) => (grouped[id] ? grouped[id].length : WARMUP_SERIES_COUNT)));
                 const warmupRounds = (seanceType && seanceType.warmupRounds != null) ? seanceType.warmupRounds : computedRounds;
