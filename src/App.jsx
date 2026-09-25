@@ -4485,6 +4485,15 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                           🔗 Superset {supersetLabels[mySupersetId]}
                         </span>
                       )}
+                      <label style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer", fontSize: 11, fontWeight: 400, color: COLORS.textDim, whiteSpace: "nowrap" }}>
+                        <input
+                          type="checkbox"
+                          checked={allValidatedInZone([exId])}
+                          onChange={() => toggleAllInZone([exId])}
+                          style={{ cursor: "pointer" }}
+                        />
+                        Tout valider
+                      </label>
                       {isCoach && (
                         <button
                           type="button"
