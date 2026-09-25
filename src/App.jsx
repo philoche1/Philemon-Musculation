@@ -5260,23 +5260,30 @@ function SessionBilanForm({ bilan, onChange, role }) {
     { value: "neutral", emoji: "😐", label: "Normal" },
     { value: "happy", emoji: "😊", label: "Content" },
   ];
+  const difficulteOptions = [
+    { value: "facile", label: "Facile" },
+    { value: "moyen", label: "Moyen" },
+    { value: "difficile", label: "Difficile" },
+  ];
   return (
     <div style={styles.bilanPanel}>
       <div style={styles.sectionHeader}>Bilan après séance</div>
 
       <div style={{ marginBottom: 16 }}>
-        <label style={styles.fieldLabel}>Difficulté ressentie (1 à 10)</label>
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
+        <label style={styles.fieldLabel}>Difficulté</label>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {difficulteOptions.map((opt) => (
             <button
-              key={n}
-              onClick={() => onChange("difficulte", bilan.difficulte === n ? null : n)}
+              key={opt.value}
+              onClick={() => onChange("difficulte", bilan.difficulte === opt.value ? null : opt.value)}
               style={{
                 ...styles.bilanScaleBtn,
-                ...(bilan.difficulte === n ? styles.bilanScaleBtnActive : {}),
+                width: "auto",
+                padding: "6px 16px",
+                ...(bilan.difficulte === opt.value ? styles.bilanScaleBtnActive : {}),
               }}
             >
-              {n}
+              {opt.label}
             </button>
           ))}
         </div>
