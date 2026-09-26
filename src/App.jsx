@@ -3561,6 +3561,12 @@ const WARMUP_ROUND_REST_SECONDS = 60;
 const CARDIO_WORK_SECONDS = 300;
 const CARDIO_REST_SECONDS = 30;
 const CARDIO_ROUND_REST_SECONDS = 60;
+const CARDIO_METEO_OPTIONS = [
+  { key: "soleil", emoji: "☀️", label: "Soleil" },
+  { key: "pluie", emoji: "🌧️", label: "Pluie" },
+  { key: "froid", emoji: "🥶", label: "Froid" },
+  { key: "vent", emoji: "💨", label: "Vent" },
+];
 
 function buildCircuitPhases(exerciseNames, rounds, workSeconds, restSeconds, roundRestSeconds) {
   const phases = [];
@@ -4172,11 +4178,19 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
     return [...withoutCircuitIds.slice(0, insertAt), ...circuitGroups, ...withoutCircuitIds.slice(insertAt)];
   })();
   const CORPS_DE_SEANCE_ZONES = ["BAS DU CORPS", "HAUT DU CORPS", "CENTRE DU CORPS"];
-  const FIN_DE_SEANCE_ZONES = ["Cardio", "Étirements"];
   const DEBUT_DE_SEANCE_ZONES = ["Mobilité", "Échauffement"];
+  // Le cardio (ex: course à pieds) n'est classé "Fin de séance" que s'il y a
+  // déjà un corps de séance (musculation/circuit) avant lui. Sinon (ex: une
+  // séance distancielle uniquement composée de "Course à pieds"), le cardio
+  // EST le corps de séance.
+  const hasCorpsContent = zoneGroups.some(([label, , circuitMeta]) => CORPS_DE_SEANCE_ZONES.includes(label) || !!circuitMeta);
   const debutHeaderIndex = zoneGroups.findIndex(([label]) => DEBUT_DE_SEANCE_ZONES.includes(label));
-  const corpsHeaderIndex = zoneGroups.findIndex(([label, , circuitMeta]) => CORPS_DE_SEANCE_ZONES.includes(label) || !!circuitMeta);
-  const finHeaderIndex = zoneGroups.findIndex(([label]) => FIN_DE_SEANCE_ZONES.includes(label));
+  const corpsHeaderIndex = zoneGroups.findIndex(
+    ([label, , circuitMeta]) => CORPS_DE_SEANCE_ZONES.includes(label) || !!circuitMeta || (!hasCorpsContent && label === "Cardio")
+  );
+  const finHeaderIndex = zoneGroups.findIndex(
+    ([label]) => label === "Étirements" || (label === "Cardio" && hasCorpsContent)
+  );
 
   // Groupes superset/biset actuellement valides (au moins 2 exercices
   // distincts encore présents dans la séance), avec une lettre A/B/C... pour
@@ -4249,6 +4263,14 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
   // coach "Placements, réglages machine" qui est partagée entre séances).
   const updateExerciseRemarque = (exId, text) => {
     const copy = local.map((e) => (groupKeyOf(e) === exId ? { ...e, remarque: text || null } : e));
+    setLocal(copy);
+    onSave({ entries: copy, bilan, bilanAvant, niveaux: niveauxParExercice });
+  };
+
+  // Champs complémentaires d'un exercice cardio (distance, dénivelé, météo),
+  // propres à cette séance précise, au même titre que la remarque.
+  const updateCardioExtra = (exId, field, value) => {
+    const copy = local.map((e) => (groupKeyOf(e) === exId ? { ...e, [field]: value } : e));
     setLocal(copy);
     onSave({ entries: copy, bilan, bilanAvant, niveaux: niveauxParExercice });
   };
@@ -4924,6 +4946,7 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                         </div>
                       )
                     ) : cardio ? (
+                      <>
                       <div style={rows[0] && rows[0].validee ? { ...styles.entryRow, ...styles.entryRowValidated } : styles.entryRow}>
                         <span style={styles.entryLabel}>Durée</span>
                         <input
@@ -4985,6 +5008,69 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                           </button>
                         )}
                       </div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginBottom: 8 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                          <span style={styles.entryLabel}>Distance</span>
+                          <input
+                            type="number"
+                            min={0}
+                            step="0.1"
+                            value={rows[0] && rows[0].distanceKm != null ? rows[0].distanceKm : ""}
+                            onFocus={(e) => e.target.select()}
+                            placeholder="0"
+                            onChange={(e) => updateCardioExtra(exId, "distanceKm", e.target.value === "" ? null : Number(e.target.value))}
+                            style={{ ...styles.numInput, width: 60 }}
+                          />
+                          <span style={styles.unitLabel}>km</span>
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                          <span style={styles.entryLabel}>D+</span>
+                          <input
+                            type="number"
+                            min={0}
+                            value={rows[0] && rows[0].deniveleDPlus != null ? rows[0].deniveleDPlus : ""}
+                            onFocus={(e) => e.target.select()}
+                            placeholder="0"
+                            onChange={(e) => updateCardioExtra(exId, "deniveleDPlus", e.target.value === "" ? null : Number(e.target.value))}
+                            style={{ ...styles.numInput, width: 55 }}
+                          />
+                          <span style={styles.unitLabel}>m</span>
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                          <span style={styles.entryLabel}>D-</span>
+                          <input
+                            type="number"
+                            min={0}
+                            value={rows[0] && rows[0].deniveleDMinus != null ? rows[0].deniveleDMinus : ""}
+                            onFocus={(e) => e.target.select()}
+                            placeholder="0"
+                            onChange={(e) => updateCardioExtra(exId, "deniveleDMinus", e.target.value === "" ? null : Number(e.target.value))}
+                            style={{ ...styles.numInput, width: 55 }}
+                          />
+                          <span style={styles.unitLabel}>m</span>
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <span style={styles.entryLabel}>Météo</span>
+                          {CARDIO_METEO_OPTIONS.map((m) => (
+                            <button
+                              key={m.key}
+                              type="button"
+                              onClick={() => updateCardioExtra(exId, "meteo", (rows[0] && rows[0].meteo) === m.key ? null : m.key)}
+                              title={m.label}
+                              aria-label={m.label}
+                              style={{
+                                ...styles.infoBtn,
+                                ...((rows[0] && rows[0].meteo) === m.key ? styles.infoBtnActive : {}),
+                                fontSize: 16,
+                                padding: "4px 6px",
+                              }}
+                            >
+                              {m.emoji}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      </>
                     ) : (
                     <>
                     {rows.map((row, rIdx) => {
