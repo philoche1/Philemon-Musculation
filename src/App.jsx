@@ -4244,6 +4244,15 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
     onSave({ entries: copy, bilan, bilanAvant, niveaux: niveauxParExercice });
   };
 
+  // Remarque libre du client pour un exercice cardio (ex: "test de nouvelles
+  // chaussures"), propre à cette séance précise (contrairement à la note
+  // coach "Placements, réglages machine" qui est partagée entre séances).
+  const updateExerciseRemarque = (exId, text) => {
+    const copy = local.map((e) => (groupKeyOf(e) === exId ? { ...e, remarque: text || null } : e));
+    setLocal(copy);
+    onSave({ entries: copy, bilan, bilanAvant, niveaux: niveauxParExercice });
+  };
+
   // Valide/dévalide en un clic toutes les séries des exercices d'une même
   // zone (ex: tout le circuit d'échauffement), sans empêcher de continuer à
   // cocher chaque série individuellement ensuite.
@@ -4382,7 +4391,11 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
           <SessionBilanAvantForm bilan={bilanAvant} onChange={updateBilanAvant} />
           {zoneGroups.map(([label, ids, circuitMeta], idx) => {
             const isWarmupCircuit = label === "Échauffement" && ids.length > 0 && !isDistanciel;
-            const isCardioCircuit = label === "Cardio" && ids.length > 0;
+            // Un chrono "Circuit cardio" n'a de sens que pour enchaîner
+            // plusieurs exercices cardio ; un seul exercice (ex: une sortie
+            // course à pieds notée en durée + lien Strava) reste un exercice
+            // simple, sans chrono de circuit imposé.
+            const isCardioCircuit = label === "Cardio" && ids.length > 1;
             const isCorpsCircuit = !!circuitMeta && ids.length > 0;
             const hasCircuitTimer = isWarmupCircuit || isCardioCircuit || isCorpsCircuit;
             return (
@@ -4835,12 +4848,22 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                         </div>
                       );
                     })()}
-                    <ExerciseNoteBox exId={realExId} notes={exerciseNotes} onSave={onSaveNote} isCoach={isCoach} />
+                    {!cardio && (
+                      <ExerciseNoteBox exId={realExId} notes={exerciseNotes} onSave={onSaveNote} isCoach={isCoach} />
+                    )}
                     {cardio && (
-                      <StravaLinkField
-                        url={rows[0] && rows[0].stravaUrl}
-                        onChange={(url) => updateStravaUrl(exId, url)}
-                      />
+                      <>
+                        <ExerciseRemarkField
+                          label="Remarques"
+                          placeholder="exemple : test de nouvelles chaussures"
+                          value={rows[0] && rows[0].remarque}
+                          onChange={(text) => updateExerciseRemarque(exId, text)}
+                        />
+                        <StravaLinkField
+                          url={rows[0] && rows[0].stravaUrl}
+                          onChange={(url) => updateStravaUrl(exId, url)}
+                        />
+                      </>
                     )}
                     {showTimerBtn && (() => {
                       const groups = restDurationGroups(ex, Math.max(rows.length, 1));
@@ -6284,38 +6307,77 @@ const exerciseNotesKey = (clientId) => `exercise-notes-v1-${clientId}`;
 // machine...). Une note par exercice, propre à ce client, qui reste
 // affichée à chaque fois que l'exercice revient dans une séance. Modifiable
 // par le coach uniquement ; le client la voit en lecture seule.
-function ExerciseNoteBox({ exId, notes, onSave, isCoach }) {
+function ExerciseNoteBox({ exId, notes, onSave, isCoach, label = null, placeholder = "Placements, réglages machine...", editableByClient = false }) {
   const savedValue = (notes && notes[exId]) || "";
   const [value, setValue] = useState(savedValue);
+  const canEdit = isCoach || editableByClient;
 
   useEffect(() => {
     setValue(savedValue);
   }, [savedValue]);
 
-  if (!isCoach && !savedValue) return null;
+  if (!canEdit && !savedValue) return null;
 
   return (
-    <AutoGrowTextarea
-      value={value}
-      onChange={(e) => isCoach && setValue(e.target.value)}
-      onBlur={() => {
-        if (isCoach && value !== savedValue) onSave(exId, value);
-      }}
-      readOnly={!isCoach}
-      placeholder={isCoach ? "Placements, réglages machine..." : ""}
-      style={{
-        width: "100%",
-        boxSizing: "border-box",
-        marginBottom: 10,
-        padding: "6px 10px",
-        fontSize: 12,
-        fontFamily: FONT_BODY,
-        color: COLORS.textDim,
-        background: COLORS.bg2,
-        border: `1px solid ${COLORS.cardBorder}`,
-        borderRadius: 6,
-      }}
-    />
+    <div style={{ marginBottom: 10 }}>
+      {label && (
+        <div style={{ fontSize: 11, color: COLORS.textFaint, marginBottom: 4 }}>{label}</div>
+      )}
+      <AutoGrowTextarea
+        value={value}
+        onChange={(e) => canEdit && setValue(e.target.value)}
+        onBlur={() => {
+          if (canEdit && value !== savedValue) onSave(exId, value);
+        }}
+        readOnly={!canEdit}
+        placeholder={canEdit ? placeholder : ""}
+        style={{
+          width: "100%",
+          boxSizing: "border-box",
+          padding: "6px 10px",
+          fontSize: 12,
+          fontFamily: FONT_BODY,
+          color: COLORS.textDim,
+          background: COLORS.bg2,
+          border: `1px solid ${COLORS.cardBorder}`,
+          borderRadius: 6,
+        }}
+      />
+    </div>
+  );
+}
+
+function ExerciseRemarkField({ label, placeholder, value, onChange }) {
+  const savedValue = value || "";
+  const [val, setVal] = useState(savedValue);
+
+  useEffect(() => {
+    setVal(savedValue);
+  }, [savedValue]);
+
+  return (
+    <div style={{ marginBottom: 10 }}>
+      {label && <div style={{ fontSize: 11, color: COLORS.textFaint, marginBottom: 4 }}>{label}</div>}
+      <AutoGrowTextarea
+        value={val}
+        onChange={(e) => setVal(e.target.value)}
+        onBlur={() => {
+          if (val !== savedValue) onChange(val);
+        }}
+        placeholder={placeholder}
+        style={{
+          width: "100%",
+          boxSizing: "border-box",
+          padding: "6px 10px",
+          fontSize: 12,
+          fontFamily: FONT_BODY,
+          color: COLORS.textDim,
+          background: COLORS.bg2,
+          border: `1px solid ${COLORS.cardBorder}`,
+          borderRadius: 6,
+        }}
+      />
+    </div>
   );
 }
 
