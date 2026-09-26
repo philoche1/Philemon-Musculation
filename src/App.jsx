@@ -4235,6 +4235,15 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
     onSave({ entries: copy, bilan, bilanAvant, niveaux: niveauxParExercice });
   };
 
+  // Lien Strava partagé par le client pour un exercice de cardio (ex: course
+  // à pieds) — stocké sur toutes les séries de cet exercice pour rester
+  // synchronisé, mais affiché/édité une seule fois au niveau de l'exercice.
+  const updateStravaUrl = (exId, url) => {
+    const copy = local.map((e) => (groupKeyOf(e) === exId ? { ...e, stravaUrl: url || null } : e));
+    setLocal(copy);
+    onSave({ entries: copy, bilan, bilanAvant, niveaux: niveauxParExercice });
+  };
+
   // Valide/dévalide en un clic toutes les séries des exercices d'une même
   // zone (ex: tout le circuit d'échauffement), sans empêcher de continuer à
   // cocher chaque série individuellement ensuite.
@@ -4827,6 +4836,12 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                       );
                     })()}
                     <ExerciseNoteBox exId={realExId} notes={exerciseNotes} onSave={onSaveNote} isCoach={isCoach} />
+                    {cardio && (
+                      <StravaLinkField
+                        url={rows[0] && rows[0].stravaUrl}
+                        onChange={(url) => updateStravaUrl(exId, url)}
+                      />
+                    )}
                     {showTimerBtn && (() => {
                       const groups = restDurationGroups(ex, Math.max(rows.length, 1));
                       const active = activeRest[exId];
@@ -6301,6 +6316,51 @@ function ExerciseNoteBox({ exId, notes, onSave, isCoach }) {
         borderRadius: 6,
       }}
     />
+  );
+}
+
+function StravaLinkField({ url, onChange }) {
+  const savedValue = url || "";
+  const [value, setValue] = useState(savedValue);
+
+  useEffect(() => {
+    setValue(savedValue);
+  }, [savedValue]);
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={() => {
+          if (value.trim() !== savedValue) onChange(value.trim());
+        }}
+        placeholder="Colle ici le lien de ta sortie Strava..."
+        style={{
+          flex: 1,
+          minWidth: 180,
+          boxSizing: "border-box",
+          padding: "6px 10px",
+          fontSize: 12,
+          fontFamily: FONT_BODY,
+          color: COLORS.textDim,
+          background: COLORS.bg2,
+          border: `1px solid ${COLORS.cardBorder}`,
+          borderRadius: 6,
+        }}
+      />
+      {savedValue && (
+        <a
+          href={savedValue}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ ...styles.secondaryBtn, textDecoration: "none", display: "inline-flex", alignItems: "center", fontSize: 12, padding: "6px 10px" }}
+        >
+          🏃 Voir sur Strava
+        </a>
+      )}
+    </div>
   );
 }
 
