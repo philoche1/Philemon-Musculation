@@ -4285,9 +4285,17 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
   };
 
   const previousValues = useMemo(() => {
+    // Deux séances peuvent partager la même date (ex: plusieurs séances
+    // enregistrées le même jour) : on ne se fie pas qu'à la date, on
+    // départage par position dans le tableau (ordre de création).
     const earlierSessions = (allSessions || [])
-      .filter((s) => s.id !== session.id && s.date < session.date)
-      .sort((a, b) => (a.date < b.date ? 1 : -1));
+      .map((s, idx) => ({ s, idx }))
+      .filter(({ s }) => s.id !== session.id && s.date <= session.date)
+      .sort((a, b) => {
+        if (a.s.date !== b.s.date) return a.s.date < b.s.date ? 1 : -1;
+        return b.idx - a.idx;
+      })
+      .map(({ s }) => s);
     const map = {};
     session.entries.forEach((e) => {
       const key = e.exerciceId + "_" + e.serie;
@@ -4310,8 +4318,13 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
   // afficher "Dernière fois : ..." à la séance suivante.
   const previousCardioValues = useMemo(() => {
     const earlierSessions = (allSessions || [])
-      .filter((s) => s.id !== session.id && s.date < session.date)
-      .sort((a, b) => (a.date < b.date ? 1 : -1));
+      .map((s, idx) => ({ s, idx }))
+      .filter(({ s }) => s.id !== session.id && s.date <= session.date)
+      .sort((a, b) => {
+        if (a.s.date !== b.s.date) return a.s.date < b.s.date ? 1 : -1;
+        return b.idx - a.idx;
+      })
+      .map(({ s }) => s);
     const map = {};
     session.entries.forEach((e) => {
       const key = groupKeyOf(e);
