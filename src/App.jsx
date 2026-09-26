@@ -5207,6 +5207,30 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                         )}
                       </div>
                       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                        <span style={{ ...styles.entryLabel, width: "auto", whiteSpace: "nowrap" }}>FC moyenne</span>
+                        <input
+                          type="number"
+                          min={0}
+                          value={rows[0] && rows[0].fcMoyenne != null ? rows[0].fcMoyenne : ""}
+                          onFocus={(e) => e.target.select()}
+                          placeholder="0"
+                          onChange={(e) => updateCardioExtra(exId, "fcMoyenne", e.target.value === "" ? null : Number(e.target.value))}
+                          style={{ ...styles.numInput, width: 55 }}
+                        />
+                        <span style={styles.unitLabel}>bpm</span>
+                        <span style={{ ...styles.entryLabel, width: "auto", whiteSpace: "nowrap" }}>FC max</span>
+                        <input
+                          type="number"
+                          min={0}
+                          value={rows[0] && rows[0].fcMax != null ? rows[0].fcMax : ""}
+                          onFocus={(e) => e.target.select()}
+                          placeholder="0"
+                          onChange={(e) => updateCardioExtra(exId, "fcMax", e.target.value === "" ? null : Number(e.target.value))}
+                          style={{ ...styles.numInput, width: 55 }}
+                        />
+                        <span style={styles.unitLabel}>bpm</span>
+                      </div>
+                      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginBottom: 8 }}>
                         <span style={{ ...styles.entryLabel, width: "auto", whiteSpace: "nowrap" }}>Météo</span>
                         {CARDIO_METEO_OPTIONS.map((m) => {
                           const selected = ((rows[0] && rows[0].meteo) || []).includes(m.key);
@@ -5232,30 +5256,6 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                             </button>
                           );
                         })}
-                      </div>
-                      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginBottom: 8 }}>
-                        <span style={{ ...styles.entryLabel, width: "auto", whiteSpace: "nowrap" }}>FC moyenne</span>
-                        <input
-                          type="number"
-                          min={0}
-                          value={rows[0] && rows[0].fcMoyenne != null ? rows[0].fcMoyenne : ""}
-                          onFocus={(e) => e.target.select()}
-                          placeholder="0"
-                          onChange={(e) => updateCardioExtra(exId, "fcMoyenne", e.target.value === "" ? null : Number(e.target.value))}
-                          style={{ ...styles.numInput, width: 55 }}
-                        />
-                        <span style={styles.unitLabel}>bpm</span>
-                        <span style={{ ...styles.entryLabel, width: "auto", whiteSpace: "nowrap" }}>FC max</span>
-                        <input
-                          type="number"
-                          min={0}
-                          value={rows[0] && rows[0].fcMax != null ? rows[0].fcMax : ""}
-                          onFocus={(e) => e.target.select()}
-                          placeholder="0"
-                          onChange={(e) => updateCardioExtra(exId, "fcMax", e.target.value === "" ? null : Number(e.target.value))}
-                          style={{ ...styles.numInput, width: 55 }}
-                        />
-                        <span style={styles.unitLabel}>bpm</span>
                       </div>
                       </>
                     ) : (
