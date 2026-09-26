@@ -3563,6 +3563,7 @@ const CARDIO_REST_SECONDS = 30;
 const CARDIO_ROUND_REST_SECONDS = 60;
 const CARDIO_METEO_OPTIONS = [
   { key: "soleil", emoji: "☀️", label: "Soleil" },
+  { key: "eclaircies", emoji: "⛅", label: "Éclaircies" },
   { key: "pluie", emoji: "🌧️", label: "Pluie" },
   { key: "froid", emoji: "🥶", label: "Froid" },
   { key: "vent", emoji: "💨", label: "Vent" },
@@ -4952,14 +4953,29 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                         <input
                           type="number"
                           min={0}
-                          value={rows[0] ? Math.floor((rows[0].reps ?? 0) / 60) : 0}
+                          value={rows[0] ? Math.floor((rows[0].reps ?? 0) / 3600) : 0}
                           onFocus={(e) => e.target.select()}
                           onChange={(e) => {
-                            const m = Math.max(0, Number(e.target.value) || 0);
-                            const s = (rows[0]?.reps ?? 0) % 60;
-                            updateField(rows[0]._idx, "reps", String(m * 60 + s));
+                            const h = Math.max(0, Number(e.target.value) || 0);
+                            const rest = (rows[0]?.reps ?? 0) % 3600;
+                            updateField(rows[0]._idx, "reps", String(h * 3600 + rest));
                           }}
-                          style={{ ...styles.numInput, width: 50 }}
+                          style={{ ...styles.numInput, width: 44 }}
+                        />
+                        <span style={styles.unitLabel}>h</span>
+                        <input
+                          type="number"
+                          min={0}
+                          max={59}
+                          value={rows[0] ? Math.floor(((rows[0].reps ?? 0) % 3600) / 60) : 0}
+                          onFocus={(e) => e.target.select()}
+                          onChange={(e) => {
+                            const m = Math.max(0, Math.min(59, Number(e.target.value) || 0));
+                            const h = Math.floor((rows[0]?.reps ?? 0) / 3600);
+                            const s = (rows[0]?.reps ?? 0) % 60;
+                            updateField(rows[0]._idx, "reps", String(h * 3600 + m * 60 + s));
+                          }}
+                          style={{ ...styles.numInput, width: 44 }}
                         />
                         <span style={styles.unitLabel}>min</span>
                         <input
@@ -4970,10 +4986,11 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                           onFocus={(e) => e.target.select()}
                           onChange={(e) => {
                             const s = Math.max(0, Math.min(59, Number(e.target.value) || 0));
-                            const m = Math.floor((rows[0]?.reps ?? 0) / 60);
-                            updateField(rows[0]._idx, "reps", String(m * 60 + s));
+                            const h = Math.floor((rows[0]?.reps ?? 0) / 3600);
+                            const m = Math.floor(((rows[0]?.reps ?? 0) % 3600) / 60);
+                            updateField(rows[0]._idx, "reps", String(h * 3600 + m * 60 + s));
                           }}
-                          style={{ ...styles.numInput, width: 50 }}
+                          style={{ ...styles.numInput, width: 44 }}
                         />
                         <span style={styles.unitLabel}>sec</span>
                         {rows[0] && (
@@ -5008,67 +5025,71 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                           </button>
                         )}
                       </div>
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginBottom: 8 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                          <span style={styles.entryLabel}>Distance</span>
-                          <input
-                            type="number"
-                            min={0}
-                            step="0.1"
-                            value={rows[0] && rows[0].distanceKm != null ? rows[0].distanceKm : ""}
-                            onFocus={(e) => e.target.select()}
-                            placeholder="0"
-                            onChange={(e) => updateCardioExtra(exId, "distanceKm", e.target.value === "" ? null : Number(e.target.value))}
-                            style={{ ...styles.numInput, width: 60 }}
-                          />
-                          <span style={styles.unitLabel}>km</span>
-                        </div>
-                        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                          <span style={styles.entryLabel}>D+</span>
-                          <input
-                            type="number"
-                            min={0}
-                            value={rows[0] && rows[0].deniveleDPlus != null ? rows[0].deniveleDPlus : ""}
-                            onFocus={(e) => e.target.select()}
-                            placeholder="0"
-                            onChange={(e) => updateCardioExtra(exId, "deniveleDPlus", e.target.value === "" ? null : Number(e.target.value))}
-                            style={{ ...styles.numInput, width: 55 }}
-                          />
-                          <span style={styles.unitLabel}>m</span>
-                        </div>
-                        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                          <span style={styles.entryLabel}>D-</span>
-                          <input
-                            type="number"
-                            min={0}
-                            value={rows[0] && rows[0].deniveleDMinus != null ? rows[0].deniveleDMinus : ""}
-                            onFocus={(e) => e.target.select()}
-                            placeholder="0"
-                            onChange={(e) => updateCardioExtra(exId, "deniveleDMinus", e.target.value === "" ? null : Number(e.target.value))}
-                            style={{ ...styles.numInput, width: 55 }}
-                          />
-                          <span style={styles.unitLabel}>m</span>
-                        </div>
-                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                          <span style={styles.entryLabel}>Météo</span>
-                          {CARDIO_METEO_OPTIONS.map((m) => (
+                      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                        <span style={{ ...styles.entryLabel, width: "auto", whiteSpace: "nowrap" }}>Distance</span>
+                        <input
+                          type="number"
+                          min={0}
+                          step="0.1"
+                          value={rows[0] && rows[0].distanceKm != null ? rows[0].distanceKm : ""}
+                          onFocus={(e) => e.target.select()}
+                          placeholder="0"
+                          onChange={(e) => updateCardioExtra(exId, "distanceKm", e.target.value === "" ? null : Number(e.target.value))}
+                          style={{ ...styles.numInput, width: 60 }}
+                        />
+                        <span style={styles.unitLabel}>km</span>
+                      </div>
+                      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                        <span style={{ ...styles.entryLabel, width: "auto", whiteSpace: "nowrap" }}>Dénivelé</span>
+                        <span style={styles.unitLabel}>D+</span>
+                        <input
+                          type="number"
+                          min={0}
+                          value={rows[0] && rows[0].deniveleDPlus != null ? rows[0].deniveleDPlus : ""}
+                          onFocus={(e) => e.target.select()}
+                          placeholder="0"
+                          onChange={(e) => updateCardioExtra(exId, "deniveleDPlus", e.target.value === "" ? null : Number(e.target.value))}
+                          style={{ ...styles.numInput, width: 55 }}
+                        />
+                        <span style={styles.unitLabel}>m</span>
+                        <span style={styles.unitLabel}>D-</span>
+                        <input
+                          type="number"
+                          min={0}
+                          value={rows[0] && rows[0].deniveleDMinus != null ? rows[0].deniveleDMinus : ""}
+                          onFocus={(e) => e.target.select()}
+                          placeholder="0"
+                          onChange={(e) => updateCardioExtra(exId, "deniveleDMinus", e.target.value === "" ? null : Number(e.target.value))}
+                          style={{ ...styles.numInput, width: 55 }}
+                        />
+                        <span style={styles.unitLabel}>m</span>
+                      </div>
+                      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                        <span style={{ ...styles.entryLabel, width: "auto", whiteSpace: "nowrap" }}>Météo</span>
+                        {CARDIO_METEO_OPTIONS.map((m) => {
+                          const selected = ((rows[0] && rows[0].meteo) || []).includes(m.key);
+                          return (
                             <button
                               key={m.key}
                               type="button"
-                              onClick={() => updateCardioExtra(exId, "meteo", (rows[0] && rows[0].meteo) === m.key ? null : m.key)}
+                              onClick={() => {
+                                const current = (rows[0] && rows[0].meteo) || [];
+                                const next = selected ? current.filter((k) => k !== m.key) : [...current, m.key];
+                                updateCardioExtra(exId, "meteo", next);
+                              }}
                               title={m.label}
                               aria-label={m.label}
                               style={{
                                 ...styles.infoBtn,
-                                ...((rows[0] && rows[0].meteo) === m.key ? styles.infoBtnActive : {}),
+                                ...(selected ? styles.infoBtnActive : {}),
                                 fontSize: 16,
                                 padding: "4px 6px",
                               }}
                             >
                               {m.emoji}
                             </button>
-                          ))}
-                        </div>
+                          );
+                        })}
                       </div>
                       </>
                     ) : (
