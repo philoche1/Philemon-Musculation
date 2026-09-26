@@ -238,12 +238,17 @@ function getPreviousEntriesSameSeance(allSessions, seanceNom, excludeSessionId) 
 // Applique les valeurs de la dernière séance identique (si elle existe) sur
 // un tableau d'entries fraîchement généré par makeEntries, et initialise le
 // statut "validée" de chaque série à false.
-function applyPreviousEntries(entries, previousMap) {
+function applyPreviousEntries(entries, previousMap, exercisesMap) {
   return entries.map((e) => {
     const prev = previousMap ? previousMap[e.exerciceId + "_" + e.serie] : null;
+    // Pour un exercice cardio, "reps" sert à stocker la durée (en secondes) :
+    // on ne la pré-remplit jamais avec la dernière séance, la nouvelle
+    // séance doit partir vide (la valeur précédente reste visible via
+    // "Dernière fois").
+    const cardio = isCardioExercise(exercisesMap ? exercisesMap[e.exerciceId] : null);
     return {
       ...e,
-      reps: prev && prev.reps != null ? prev.reps : e.reps,
+      reps: !cardio && prev && prev.reps != null ? prev.reps : e.reps,
       charge: prev && prev.charge != null ? prev.charge : e.charge,
       paliers: prev && prev.paliers && prev.paliers.length ? prev.paliers.map((p) => ({ ...p })) : undefined,
       validee: false,
@@ -3125,7 +3130,7 @@ function SuiviView({ data, persistSessions, role, activeClient, deleteProgrammeH
   const startFromTemplate = (seanceType) => {
     const baseEntries = makeEntries(seanceType.exerciceIds, exercises);
     const previousMap = getPreviousEntriesSameSeance(data.sessions, seanceType.nom, null);
-    const entries = applyPreviousEntries(baseEntries, previousMap);
+    const entries = applyPreviousEntries(baseEntries, previousMap, exercises);
     if (seanceType.mode === "distanciel") {
       const bookingUri = uid("distanciel");
       addSession({ id: uid("se"), date: quickDate, seanceNom: seanceType.nom, entries, niveaux: seanceType.niveaux || {}, distancielBookingUri: bookingUri });
@@ -4058,7 +4063,7 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
   const addExerciseToSession = (newExId) => {
     const baseEntries = makeEntries([newExId], exercises);
     const previousMap = getPreviousEntriesSameSeance(allSessions, session.seanceNom, session.id);
-    const newEntries = applyPreviousEntries(baseEntries, previousMap);
+    const newEntries = applyPreviousEntries(baseEntries, previousMap, exercises);
     const updated = [...local, ...newEntries];
     setLocal(updated);
     onSave({ entries: updated, bilan, bilanAvant, niveaux: niveauxParExercice });
@@ -4428,6 +4433,32 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
     onSave({ entries: copy, bilan, bilanAvant, niveaux: niveauxParExercice });
   };
 
+  // Un exercice cardio a plusieurs coches indépendantes (Durée, Distance,
+  // Dénivelé), chacune sa propre case, distinctes de la validation globale
+  // de l'exercice. Seul "Tout valider" doit toutes les cocher/décocher
+  // d'un coup ; cocher une ligne ne doit pas cocher les autres.
+  const CARDIO_CHECK_FIELDS = ["validee", "distanceValidee", "deniveleValidee"];
+  const toggleCardioField = (exId, field) => {
+    const copy = local.map((e) => (groupKeyOf(e) === exId ? { ...e, [field]: !e[field] } : e));
+    setLocal(copy);
+    onSave({ entries: copy, bilan, bilanAvant, niveaux: niveauxParExercice });
+  };
+  const allCardioValidated = (exId) => {
+    const relevant = local.filter((e) => groupKeyOf(e) === exId);
+    return relevant.length > 0 && relevant.every((e) => CARDIO_CHECK_FIELDS.every((f) => e[f]));
+  };
+  const toggleAllCardio = (exId) => {
+    const target = !allCardioValidated(exId);
+    const copy = local.map((e) => {
+      if (groupKeyOf(e) !== exId) return e;
+      const updates = {};
+      CARDIO_CHECK_FIELDS.forEach((f) => { updates[f] = target; });
+      return { ...e, ...updates };
+    });
+    setLocal(copy);
+    onSave({ entries: copy, bilan, bilanAvant, niveaux: niveauxParExercice });
+  };
+
   const addSerie = (groupKey) => {
     const rowsForEx = local.filter((e) => groupKeyOf(e) === groupKey);
     const maxSerie = rowsForEx.length ? Math.max(...rowsForEx.map((e) => e.serie)) : 0;
@@ -4651,8 +4682,8 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                       <label style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer", fontSize: 11, fontWeight: 400, color: COLORS.textDim, whiteSpace: "nowrap", marginLeft: "auto" }}>
                         <input
                           type="checkbox"
-                          checked={allValidatedInZone([exId])}
-                          onChange={() => toggleAllInZone([exId])}
+                          checked={cardio ? allCardioValidated(exId) : allValidatedInZone([exId])}
+                          onChange={() => (cardio ? toggleAllCardio(exId) : toggleAllInZone([exId]))}
                           style={{ cursor: "pointer" }}
                         />
                         Tout valider
@@ -5109,6 +5140,9 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                             ✓
                           </button>
                         )}
+                        {prevCardio && (
+                          <span style={styles.prevValue}>Dernière fois : {formatDureeHMS(prevCardio.reps)}</span>
+                        )}
                         {showConsignesBtn && (
                           <button
                             style={{ ...styles.infoBtn, ...styles.infoBtnConsignes, ...(openConsignes[exId] ? styles.infoBtnActive : {}) }}
@@ -5130,17 +5164,6 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                           </button>
                         )}
                       </div>
-                      {prevCardio && (
-                        <div style={{ marginTop: -4, marginBottom: 6 }}>
-                          <span style={styles.prevValue}>
-                            Dernière fois : {formatDureeHMS(prevCardio.reps)}
-                            {prevCardio.distanceKm != null && <> · {prevCardio.distanceKm} km</>}
-                            {prevCardio.deniveleDPlus != null && <> · D+ {prevCardio.deniveleDPlus} m</>}
-                            {prevCardio.deniveleDMinus != null && <> · D- {prevCardio.deniveleDMinus} m</>}
-                            {prevCardio.fcMoyenne != null && <> · FC moy. {prevCardio.fcMoyenne} bpm</>}
-                          </span>
-                        </div>
-                      )}
                       <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6, overflowX: "auto", paddingBottom: 2 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 6, width: 258, flexShrink: 0 }}>
                         <span style={{ ...styles.entryLabel, width: "auto", whiteSpace: "nowrap" }}>Distance</span>
@@ -5159,13 +5182,16 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                         {rows[0] && (
                           <button
                             type="button"
-                            onClick={() => toggleValidee(rows[0]._idx)}
-                            title={rows[0].validee ? "Marquer comme non validée" : "Valider cette série"}
-                            aria-label={rows[0].validee ? "Marquer comme non validée" : "Valider cette série"}
-                            style={rows[0].validee ? { ...styles.validateSerieBtn, ...styles.validateSerieBtnActive } : styles.validateSerieBtn}
+                            onClick={() => toggleCardioField(exId, "distanceValidee")}
+                            title={rows[0].distanceValidee ? "Marquer comme non validée" : "Valider cette ligne"}
+                            aria-label={rows[0].distanceValidee ? "Marquer comme non validée" : "Valider cette ligne"}
+                            style={rows[0].distanceValidee ? { ...styles.validateSerieBtn, ...styles.validateSerieBtnActive } : styles.validateSerieBtn}
                           >
                             ✓
                           </button>
+                        )}
+                        {prevCardio && prevCardio.distanceKm != null && (
+                          <span style={styles.prevValue}>Dernière fois : {prevCardio.distanceKm} km</span>
                         )}
                       </div>
                       <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6, overflowX: "auto", paddingBottom: 2 }}>
@@ -5197,13 +5223,18 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                         {rows[0] && (
                           <button
                             type="button"
-                            onClick={() => toggleValidee(rows[0]._idx)}
-                            title={rows[0].validee ? "Marquer comme non validée" : "Valider cette série"}
-                            aria-label={rows[0].validee ? "Marquer comme non validée" : "Valider cette série"}
-                            style={rows[0].validee ? { ...styles.validateSerieBtn, ...styles.validateSerieBtnActive } : styles.validateSerieBtn}
+                            onClick={() => toggleCardioField(exId, "deniveleValidee")}
+                            title={rows[0].deniveleValidee ? "Marquer comme non validée" : "Valider cette ligne"}
+                            aria-label={rows[0].deniveleValidee ? "Marquer comme non validée" : "Valider cette ligne"}
+                            style={rows[0].deniveleValidee ? { ...styles.validateSerieBtn, ...styles.validateSerieBtnActive } : styles.validateSerieBtn}
                           >
                             ✓
                           </button>
+                        )}
+                        {prevCardio && (prevCardio.deniveleDPlus != null || prevCardio.deniveleDMinus != null) && (
+                          <span style={styles.prevValue}>
+                            Dernière fois : D+ {prevCardio.deniveleDPlus ?? 0} m · D- {prevCardio.deniveleDMinus ?? 0} m
+                          </span>
                         )}
                       </div>
                       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginBottom: 8 }}>
@@ -5256,6 +5287,11 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                             </button>
                           );
                         })}
+                        {prevCardio && prevCardio.meteo && prevCardio.meteo.length > 0 && (
+                          <span style={styles.prevValue}>
+                            Dernière fois : {prevCardio.meteo.map((k) => (CARDIO_METEO_OPTIONS.find((m) => m.key === k) || {}).emoji).join(" ")}
+                          </span>
+                        )}
                       </div>
                       </>
                     ) : (
@@ -5724,7 +5760,7 @@ function NewSessionForm({ data, onCancel, onSave }) {
     const baseEntries = makeEntries(exerciceIds, exercisesMap);
     const st = data.seanceTypes.find((s) => s.id === seanceTypeId);
     const previousMap = st ? getPreviousEntriesSameSeance(data.sessions, st.nom, null) : null;
-    const entries = applyPreviousEntries(baseEntries, previousMap);
+    const entries = applyPreviousEntries(baseEntries, previousMap, exercisesMap);
     onSave({ id: uid("se"), date, seanceNom: st ? st.nom : null, entries, niveaux });
   };
 
@@ -8548,11 +8584,23 @@ function ProgressionView({ data }) {
     [...data.sessions]
       .sort((a, b) => (a.date > b.date ? 1 : -1))
       .forEach((s) => {
-        const entries = s.entries.filter((e) => e.exerciceId === exId && (e.reps != null || e.charge != null));
+        const entries = s.entries.filter(
+          (e) => e.exerciceId === exId && (e.reps != null || e.charge != null || e.distanceKm != null || e.deniveleDPlus != null)
+        );
         if (entries.length === 0) return;
         const bestReps = Math.max(...entries.map((e) => e.reps ?? 0));
         const bestCharge = Math.max(...entries.map((e) => e.charge ?? 0));
-        rows.push({ date: formatDateFR(s.date), reps: bestReps || null, charge: bestCharge || null });
+        const bestDistance = Math.max(...entries.map((e) => e.distanceKm ?? 0));
+        const bestDPlus = Math.max(...entries.map((e) => e.deniveleDPlus ?? 0));
+        const bestDMinus = Math.max(...entries.map((e) => e.deniveleDMinus ?? 0));
+        rows.push({
+          date: formatDateFR(s.date),
+          reps: bestReps || null,
+          charge: bestCharge || null,
+          distanceKm: bestDistance || null,
+          deniveleDPlus: bestDPlus || null,
+          deniveleDMinus: bestDMinus || null,
+        });
       });
     return rows;
   }, [data.sessions, exId]);
@@ -8586,25 +8634,57 @@ function ProgressionView({ data }) {
         <div style={styles.emptyState}>Pas encore de données pour {ex ? ex.nom.replace(/\n/g, " ") : "cet exercice"}.</div>
       ) : (
         <>
-          <div style={{ ...styles.card, marginTop: 16, height: 320 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              {isCardio ? (
-                <LineChart data={points} margin={{ top: 10, right: 20, left: -10, bottom: 0 }}>
-                  <CartesianGrid stroke={COLORS.cardBorder} strokeDasharray="3 3" />
-                  <XAxis dataKey="date" stroke={COLORS.textFaint} tick={{ fontSize: 11, fill: COLORS.textDim }} />
-                  <YAxis
-                    stroke={COLORS.accent}
-                    tick={{ fontSize: 11, fill: COLORS.textDim }}
-                    tickFormatter={(v) => formatTimer(v)}
-                  />
-                  <Tooltip
-                    contentStyle={{ background: COLORS.bg2, border: `1px solid ${COLORS.cardBorder}`, borderRadius: 8, fontSize: 12 }}
-                    formatter={(v) => [formatTimer(v), "Temps d'effort"]}
-                  />
-                  <Legend wrapperStyle={{ fontSize: 12 }} />
-                  <Line type="monotone" dataKey="reps" name="Temps d'effort" stroke={COLORS.accent} strokeWidth={2} dot={{ r: 3 }} connectNulls />
-                </LineChart>
-              ) : (
+          {isCardio ? (
+            <>
+              <div style={{ ...styles.card, marginTop: 16, height: 220 }}>
+                <div style={{ fontSize: 12, color: COLORS.textFaint, marginBottom: 4 }}>Durée</div>
+                <ResponsiveContainer width="100%" height="90%">
+                  <LineChart data={points} margin={{ top: 6, right: 20, left: -10, bottom: 0 }}>
+                    <CartesianGrid stroke={COLORS.cardBorder} strokeDasharray="3 3" />
+                    <XAxis dataKey="date" stroke={COLORS.textFaint} tick={{ fontSize: 11, fill: COLORS.textDim }} />
+                    <YAxis stroke={COLORS.accent} tick={{ fontSize: 11, fill: COLORS.textDim }} tickFormatter={(v) => formatTimer(v)} />
+                    <Tooltip
+                      contentStyle={{ background: COLORS.bg2, border: `1px solid ${COLORS.cardBorder}`, borderRadius: 8, fontSize: 12 }}
+                      formatter={(v) => [formatTimer(v), "Temps d'effort"]}
+                    />
+                    <Line type="monotone" dataKey="reps" name="Temps d'effort" stroke={COLORS.accent} strokeWidth={2} dot={{ r: 3 }} connectNulls />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+              <div style={{ ...styles.card, marginTop: 14, height: 220 }}>
+                <div style={{ fontSize: 12, color: COLORS.textFaint, marginBottom: 4 }}>Distance (km)</div>
+                <ResponsiveContainer width="100%" height="90%">
+                  <LineChart data={points} margin={{ top: 6, right: 20, left: -10, bottom: 0 }}>
+                    <CartesianGrid stroke={COLORS.cardBorder} strokeDasharray="3 3" />
+                    <XAxis dataKey="date" stroke={COLORS.textFaint} tick={{ fontSize: 11, fill: COLORS.textDim }} />
+                    <YAxis stroke={COLORS.accent2} tick={{ fontSize: 11, fill: COLORS.textDim }} />
+                    <Tooltip
+                      contentStyle={{ background: COLORS.bg2, border: `1px solid ${COLORS.cardBorder}`, borderRadius: 8, fontSize: 12 }}
+                      formatter={(v) => [`${v} km`, "Distance"]}
+                    />
+                    <Line type="monotone" dataKey="distanceKm" name="Distance" stroke={COLORS.accent2} strokeWidth={2} dot={{ r: 3 }} connectNulls />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+              <div style={{ ...styles.card, marginTop: 14, height: 220 }}>
+                <div style={{ fontSize: 12, color: COLORS.textFaint, marginBottom: 4 }}>Dénivelé D+ (m)</div>
+                <ResponsiveContainer width="100%" height="90%">
+                  <LineChart data={points} margin={{ top: 6, right: 20, left: -10, bottom: 0 }}>
+                    <CartesianGrid stroke={COLORS.cardBorder} strokeDasharray="3 3" />
+                    <XAxis dataKey="date" stroke={COLORS.textFaint} tick={{ fontSize: 11, fill: COLORS.textDim }} />
+                    <YAxis stroke={COLORS.accent} tick={{ fontSize: 11, fill: COLORS.textDim }} />
+                    <Tooltip
+                      contentStyle={{ background: COLORS.bg2, border: `1px solid ${COLORS.cardBorder}`, borderRadius: 8, fontSize: 12 }}
+                      formatter={(v) => [`${v} m`, "Dénivelé D+"]}
+                    />
+                    <Line type="monotone" dataKey="deniveleDPlus" name="Dénivelé D+" stroke={COLORS.accent} strokeWidth={2} dot={{ r: 3 }} connectNulls />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </>
+          ) : (
+            <div style={{ ...styles.card, marginTop: 16, height: 320 }}>
+              <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={points} margin={{ top: 10, right: 20, left: -10, bottom: 0 }}>
                   <CartesianGrid stroke={COLORS.cardBorder} strokeDasharray="3 3" />
                   <XAxis dataKey="date" stroke={COLORS.textFaint} tick={{ fontSize: 11, fill: COLORS.textDim }} />
@@ -8615,9 +8695,9 @@ function ProgressionView({ data }) {
                   <Line yAxisId="left" type="monotone" dataKey="reps" name="Répétitions" stroke={COLORS.accent} strokeWidth={2} dot={{ r: 3 }} connectNulls />
                   <Line yAxisId="right" type="monotone" dataKey="charge" name="Charge (kg)" stroke={COLORS.accent2} strokeWidth={2} dot={{ r: 3 }} connectNulls />
                 </LineChart>
-              )}
-            </ResponsiveContainer>
-          </div>
+              </ResponsiveContainer>
+            </div>
+          )}
 
           <div style={{ ...styles.card, marginTop: 14, padding: 0, overflow: "hidden" }}>
             <table style={styles.table}>
@@ -8625,7 +8705,12 @@ function ProgressionView({ data }) {
                 <tr>
                   <th style={styles.th}>Date</th>
                   {isCardio ? (
-                    <th style={styles.th}>Temps d'effort</th>
+                    <>
+                      <th style={styles.th}>Temps d'effort</th>
+                      <th style={styles.th}>Distance</th>
+                      <th style={styles.th}>D+</th>
+                      <th style={styles.th}>D-</th>
+                    </>
                   ) : (
                     <>
                       <th style={styles.th}>Répétitions</th>
@@ -8639,7 +8724,12 @@ function ProgressionView({ data }) {
                   <tr key={i}>
                     <td style={styles.td}>{p.date}</td>
                     {isCardio ? (
-                      <td style={styles.td}>{p.reps != null ? formatTimer(p.reps) : "—"}</td>
+                      <>
+                        <td style={styles.td}>{p.reps != null ? formatTimer(p.reps) : "—"}</td>
+                        <td style={styles.td}>{p.distanceKm != null ? `${p.distanceKm} km` : "—"}</td>
+                        <td style={styles.td}>{p.deniveleDPlus != null ? `${p.deniveleDPlus} m` : "—"}</td>
+                        <td style={styles.td}>{p.deniveleDMinus != null ? `${p.deniveleDMinus} m` : "—"}</td>
+                      </>
                     ) : (
                       <>
                         <td style={styles.td}>{p.reps ?? "—"}</td>
