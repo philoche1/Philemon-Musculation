@@ -16,6 +16,7 @@ const COACH_AUTH_KEY = "coach-authed-v1";
 const sessionsKey = (clientId) => `sessions-v1-${clientId}`;
 const profileKey = (clientId) => `profile-v1-${clientId}`;
 const bookingsKey = (clientId) => `calendly-bookings-v1-${clientId}`;
+const stravaTokensKey = (clientId) => `strava-tokens-v1-${clientId}`;
 const PROSPECTS_KEY = "prospects-v1";
 const PROSPECT_STAGES = ["À contacter", "RDV pris", "Séance faite", "Client", "Perdu"];
 
@@ -2997,6 +2998,7 @@ function SuiviView({ data, persistSessions, role, activeClient, deleteProgrammeH
   const [showNew, setShowNew] = useState(false);
   const [quickDate, setQuickDate] = useState(todayISO());
   const [exerciseNotes, setExerciseNotes] = useState({});
+  const [stravaTokens, setStravaTokens] = useState(null);
   const sessionsSorted = useMemo(
     () => [...data.sessions].sort((a, b) => (a.date < b.date ? 1 : -1)),
     [data.sessions]
@@ -3021,6 +3023,45 @@ function SuiviView({ data, persistSessions, role, activeClient, deleteProgrammeH
     setExerciseNotes(updated);
     if (activeClient) {
       await window.storage.set(exerciseNotesKey(activeClient.id), JSON.stringify(updated), true);
+    }
+  };
+
+  // Connexion Strava du client : au retour de l'autorisation Strava (voir
+  // /api/strava-auth), les jetons arrivent dans le fragment d'URL
+  // (#strava=connected&...) pour ne jamais transiter par le serveur. On les
+  // récupère une fois, on les enregistre, puis on nettoie l'URL. Sinon, on
+  // recharge les jetons déjà enregistrés pour ce client.
+  useEffect(() => {
+    if (!activeClient) return;
+    let cancelled = false;
+    const hash = window.location.hash || "";
+    if (hash.includes("strava=connected")) {
+      const params = new URLSearchParams(hash.replace(/^#/, ""));
+      if (params.get("client") === activeClient.id) {
+        const tokens = {
+          access_token: params.get("access_token") || "",
+          refresh_token: params.get("refresh_token") || "",
+          expires_at: Number(params.get("expires_at")) || 0,
+        };
+        setStravaTokens(tokens);
+        window.storage.set(stravaTokensKey(activeClient.id), JSON.stringify(tokens), false).catch(() => {});
+      }
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+      return;
+    }
+    (async () => {
+      try {
+        const r = await window.storage.get(stravaTokensKey(activeClient.id), false);
+        if (!cancelled && r && r.value) setStravaTokens(JSON.parse(r.value));
+      } catch (e) {}
+    })();
+    return () => { cancelled = true; };
+  }, [activeClient && activeClient.id]);
+
+  const updateStravaTokens = async (tokens) => {
+    setStravaTokens(tokens);
+    if (activeClient) {
+      try { await window.storage.set(stravaTokensKey(activeClient.id), JSON.stringify(tokens), false); } catch (e) {}
     }
   };
 
@@ -3257,6 +3298,9 @@ function SuiviView({ data, persistSessions, role, activeClient, deleteProgrammeH
             isDistanciel={isDistancielSeance(session.seanceNom)}
             seanceType={session.seanceNom ? data.seanceTypes.find((s) => s.nom === session.seanceNom) : null}
             role={role}
+            clientId={activeClient ? activeClient.id : null}
+            stravaTokens={stravaTokens}
+            onStravaTokensChange={updateStravaTokens}
             exerciseNotes={exerciseNotes}
             onSaveNote={saveExerciseNote}
             expanded={expanded === session.id}
@@ -3276,6 +3320,18 @@ function formatTimer(totalSeconds) {
   const m = Math.floor(s / 60);
   const sec = s % 60;
   return `${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+}
+
+function formatDureeHMS(totalSeconds) {
+  const s = Math.max(0, Number(totalSeconds) || 0);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  const parts = [];
+  if (h > 0) parts.push(`${h}h`);
+  if (h > 0 || m > 0) parts.push(`${m}min`);
+  parts.push(`${sec}s`);
+  return parts.join(" ");
 }
 
 function playBeep(count = 2, toneDuration = 0.3) {
@@ -3911,7 +3967,7 @@ function groupBySeries(entries) {
 const DEFAULT_BILAN = { difficulte: null, sensation: null, douleur: "", remarque: "" };
 const DEFAULT_BILAN_AVANT = { forme: null, sommeil: null, alimentation: null, douleur: "", remarque: "" };
 
-function SessionCard({ session, exercises, allSessions, programName, isDistanciel, seanceType, role, exerciseNotes, onSaveNote, expanded, onToggle, onExpand, onSave, onDelete }) {
+function SessionCard({ session, exercises, allSessions, programName, isDistanciel, seanceType, role, clientId, stravaTokens, onStravaTokensChange, exerciseNotes, onSaveNote, expanded, onToggle, onExpand, onSave, onDelete }) {
   const [local, setLocal] = useState(session.entries);
   const [bilan, setBilan] = useState(session.bilan || DEFAULT_BILAN);
   const [bilanAvant, setBilanAvant] = useState(session.bilanAvant || DEFAULT_BILAN_AVANT);
@@ -4244,6 +4300,30 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
     return map;
   }, [allSessions, session.id, session.date, session.entries]);
 
+  // Dernière valeur enregistrée pour un exercice cardio (ex: "Course à
+  // pieds"), tous champs confondus (durée, distance, dénivelé, FC), pour
+  // afficher "Dernière fois : ..." à la séance suivante.
+  const previousCardioValues = useMemo(() => {
+    const earlierSessions = (allSessions || [])
+      .filter((s) => s.id !== session.id && s.date < session.date)
+      .sort((a, b) => (a.date < b.date ? 1 : -1));
+    const map = {};
+    session.entries.forEach((e) => {
+      const key = groupKeyOf(e);
+      if (map[key] !== undefined) return;
+      for (const s of earlierSessions) {
+        const match = s.entries.find(
+          (en) => groupKeyOf(en) === key && (en.reps != null || en.distanceKm != null || en.deniveleDPlus != null)
+        );
+        if (match) {
+          map[key] = match;
+          break;
+        }
+      }
+    });
+    return map;
+  }, [allSessions, session.id, session.date, session.entries]);
+
   const updateField = (idx, field, value) => {
     const copy = local.map((e, i) => (i === idx ? { ...e, [field]: value === "" ? null : Number(value) } : e));
     setLocal(copy);
@@ -4272,6 +4352,25 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
   // propres à cette séance précise, au même titre que la remarque.
   const updateCardioExtra = (exId, field, value) => {
     const copy = local.map((e) => (groupKeyOf(e) === exId ? { ...e, [field]: value } : e));
+    setLocal(copy);
+    onSave({ entries: copy, bilan, bilanAvant, niveaux: niveauxParExercice });
+  };
+
+  // Remplit d'un coup les champs d'un exercice cardio à partir d'une activité
+  // Strava importée (durée, distance, dénivelé, fréquence cardiaque, lien).
+  const applyStravaActivity = (exId, activity) => {
+    const copy = local.map((e) => {
+      if (groupKeyOf(e) !== exId) return e;
+      return {
+        ...e,
+        reps: activity.durationSec != null ? String(activity.durationSec) : e.reps,
+        distanceKm: activity.distanceKm != null ? activity.distanceKm : e.distanceKm,
+        deniveleDPlus: activity.deniveleDPlus != null ? activity.deniveleDPlus : e.deniveleDPlus,
+        fcMoyenne: activity.fcMoyenne != null ? activity.fcMoyenne : e.fcMoyenne,
+        fcMax: activity.fcMax != null ? activity.fcMax : e.fcMax,
+        stravaUrl: activity.url || e.stravaUrl,
+      };
+    });
     setLocal(copy);
     onSave({ entries: copy, bilan, bilanAvant, niveaux: niveauxParExercice });
   };
@@ -4515,6 +4614,7 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                 const mobility = isMobilityExercise(ex);
                 const cardio = isCardioExercise(ex);
                 const gainage = isGainageExercise(ex);
+                const prevCardio = cardio ? previousCardioValues[exId] : null;
                 const showTimerBtn = ex && getExerciseZones(ex).some((z) => zoneLabel(z) === "BAS DU CORPS" || zoneLabel(z) === "HAUT DU CORPS");
                 const mySupersetId = rows[0] && rows[0].superset && supersetGroupsMap[rows[0].superset] ? rows[0].superset : null;
                 return (
@@ -4949,12 +5049,14 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                     ) : cardio ? (
                       <>
                       <div style={rows[0] && rows[0].validee ? { ...styles.entryRow, ...styles.entryRowValidated } : styles.entryRow}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, width: 258, flexShrink: 0 }}>
                         <span style={styles.entryLabel}>Durée</span>
                         <input
                           type="number"
                           min={0}
-                          value={rows[0] ? Math.floor((rows[0].reps ?? 0) / 3600) : 0}
+                          value={rows[0] && Math.floor((rows[0].reps ?? 0) / 3600) > 0 ? Math.floor((rows[0].reps ?? 0) / 3600) : ""}
                           onFocus={(e) => e.target.select()}
+                          placeholder="0"
                           onChange={(e) => {
                             const h = Math.max(0, Number(e.target.value) || 0);
                             const rest = (rows[0]?.reps ?? 0) % 3600;
@@ -4967,8 +5069,9 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                           type="number"
                           min={0}
                           max={59}
-                          value={rows[0] ? Math.floor(((rows[0].reps ?? 0) % 3600) / 60) : 0}
+                          value={rows[0] && Math.floor(((rows[0].reps ?? 0) % 3600) / 60) > 0 ? Math.floor(((rows[0].reps ?? 0) % 3600) / 60) : ""}
                           onFocus={(e) => e.target.select()}
+                          placeholder="0"
                           onChange={(e) => {
                             const m = Math.max(0, Math.min(59, Number(e.target.value) || 0));
                             const h = Math.floor((rows[0]?.reps ?? 0) / 3600);
@@ -4982,8 +5085,9 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                           type="number"
                           min={0}
                           max={59}
-                          value={rows[0] ? (rows[0].reps ?? 0) % 60 : 0}
+                          value={rows[0] && (rows[0].reps ?? 0) % 60 > 0 ? (rows[0].reps ?? 0) % 60 : ""}
                           onFocus={(e) => e.target.select()}
+                          placeholder="0"
                           onChange={(e) => {
                             const s = Math.max(0, Math.min(59, Number(e.target.value) || 0));
                             const h = Math.floor((rows[0]?.reps ?? 0) / 3600);
@@ -4993,6 +5097,7 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                           style={{ ...styles.numInput, width: 44 }}
                         />
                         <span style={styles.unitLabel}>sec</span>
+                        </div>
                         {rows[0] && (
                           <button
                             type="button"
@@ -5025,7 +5130,19 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                           </button>
                         )}
                       </div>
-                      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                      {prevCardio && (
+                        <div style={{ marginTop: -4, marginBottom: 6 }}>
+                          <span style={styles.prevValue}>
+                            Dernière fois : {formatDureeHMS(prevCardio.reps)}
+                            {prevCardio.distanceKm != null && <> · {prevCardio.distanceKm} km</>}
+                            {prevCardio.deniveleDPlus != null && <> · D+ {prevCardio.deniveleDPlus} m</>}
+                            {prevCardio.deniveleDMinus != null && <> · D- {prevCardio.deniveleDMinus} m</>}
+                            {prevCardio.fcMoyenne != null && <> · FC moy. {prevCardio.fcMoyenne} bpm</>}
+                          </span>
+                        </div>
+                      )}
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6, overflowX: "auto", paddingBottom: 2 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, width: 258, flexShrink: 0 }}>
                         <span style={{ ...styles.entryLabel, width: "auto", whiteSpace: "nowrap" }}>Distance</span>
                         <input
                           type="number"
@@ -5038,8 +5155,21 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                           style={{ ...styles.numInput, width: 60 }}
                         />
                         <span style={styles.unitLabel}>km</span>
+                        </div>
+                        {rows[0] && (
+                          <button
+                            type="button"
+                            onClick={() => toggleValidee(rows[0]._idx)}
+                            title={rows[0].validee ? "Marquer comme non validée" : "Valider cette série"}
+                            aria-label={rows[0].validee ? "Marquer comme non validée" : "Valider cette série"}
+                            style={rows[0].validee ? { ...styles.validateSerieBtn, ...styles.validateSerieBtnActive } : styles.validateSerieBtn}
+                          >
+                            ✓
+                          </button>
+                        )}
                       </div>
-                      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6, overflowX: "auto", paddingBottom: 2 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, width: 258, flexShrink: 0 }}>
                         <span style={{ ...styles.entryLabel, width: "auto", whiteSpace: "nowrap" }}>Dénivelé</span>
                         <span style={styles.unitLabel}>D+</span>
                         <input
@@ -5063,6 +5193,18 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                           style={{ ...styles.numInput, width: 55 }}
                         />
                         <span style={styles.unitLabel}>m</span>
+                        </div>
+                        {rows[0] && (
+                          <button
+                            type="button"
+                            onClick={() => toggleValidee(rows[0]._idx)}
+                            title={rows[0].validee ? "Marquer comme non validée" : "Valider cette série"}
+                            aria-label={rows[0].validee ? "Marquer comme non validée" : "Valider cette série"}
+                            style={rows[0].validee ? { ...styles.validateSerieBtn, ...styles.validateSerieBtnActive } : styles.validateSerieBtn}
+                          >
+                            ✓
+                          </button>
+                        )}
                       </div>
                       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginBottom: 8 }}>
                         <span style={{ ...styles.entryLabel, width: "auto", whiteSpace: "nowrap" }}>Météo</span>
@@ -5090,6 +5232,30 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                             </button>
                           );
                         })}
+                      </div>
+                      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                        <span style={{ ...styles.entryLabel, width: "auto", whiteSpace: "nowrap" }}>FC moyenne</span>
+                        <input
+                          type="number"
+                          min={0}
+                          value={rows[0] && rows[0].fcMoyenne != null ? rows[0].fcMoyenne : ""}
+                          onFocus={(e) => e.target.select()}
+                          placeholder="0"
+                          onChange={(e) => updateCardioExtra(exId, "fcMoyenne", e.target.value === "" ? null : Number(e.target.value))}
+                          style={{ ...styles.numInput, width: 55 }}
+                        />
+                        <span style={styles.unitLabel}>bpm</span>
+                        <span style={{ ...styles.entryLabel, width: "auto", whiteSpace: "nowrap" }}>FC max</span>
+                        <input
+                          type="number"
+                          min={0}
+                          value={rows[0] && rows[0].fcMax != null ? rows[0].fcMax : ""}
+                          onFocus={(e) => e.target.select()}
+                          placeholder="0"
+                          onChange={(e) => updateCardioExtra(exId, "fcMax", e.target.value === "" ? null : Number(e.target.value))}
+                          style={{ ...styles.numInput, width: 55 }}
+                        />
+                        <span style={styles.unitLabel}>bpm</span>
                       </div>
                       </>
                     ) : (
@@ -6484,6 +6650,108 @@ function ExerciseRemarkField({ label, placeholder, value, onChange }) {
           borderRadius: 6,
         }}
       />
+    </div>
+  );
+}
+
+// Connexion au compte Strava du client + import d'une activité récente
+// (distance, dénivelé, durée, fréquence cardiaque) pour remplir l'exercice
+// cardio en un clic. Les jetons Strava sont gérés par le parent (SuiviView)
+// et transmis ici en lecture/écriture.
+function StravaImportField({ clientId, stravaTokens, onStravaTokensChange, onImport }) {
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [activities, setActivities] = useState([]);
+  const [error, setError] = useState("");
+
+  const connected = !!(stravaTokens && stravaTokens.refresh_token);
+
+  const connect = () => {
+    if (!clientId) return;
+    window.location.href = `/api/strava-auth?action=authorize&clientId=${encodeURIComponent(clientId)}`;
+  };
+
+  const loadActivities = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const res = await fetch("/api/strava-activities", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          access_token: stravaTokens.access_token,
+          refresh_token: stravaTokens.refresh_token,
+          expires_at: stravaTokens.expires_at,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Erreur");
+      setActivities(data.activities || []);
+      if (data.tokens) onStravaTokensChange(data.tokens);
+      setOpen(true);
+    } catch (e) {
+      setError("Impossible de récupérer tes activités Strava. Réessaie ou reconnecte ton compte.");
+    }
+    setLoading(false);
+  };
+
+  if (!connected) {
+    return (
+      <div style={{ marginBottom: 10 }}>
+        <button type="button" onClick={connect} style={{ ...styles.secondaryBtn, fontSize: 12 }}>
+          🔗 Connecter mon compte Strava
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <button
+        type="button"
+        onClick={open ? () => setOpen(false) : loadActivities}
+        disabled={loading}
+        style={{ ...styles.secondaryBtn, fontSize: 12 }}
+      >
+        {loading ? "Chargement..." : open ? "Fermer" : "📥 Importer depuis Strava"}
+      </button>
+      {error && <div style={{ fontSize: 11, color: COLORS.danger, marginTop: 4 }}>{error}</div>}
+      {open && (
+        <div style={{ marginTop: 6, border: `1px solid ${COLORS.cardBorder}`, borderRadius: 8, overflow: "hidden" }}>
+          {activities.length === 0 && (
+            <div style={{ padding: 10, fontSize: 12, color: COLORS.textFaint }}>Aucune activité récente trouvée.</div>
+          )}
+          {activities.map((a) => (
+            <button
+              key={a.id}
+              type="button"
+              onClick={() => {
+                onImport(a);
+                setOpen(false);
+              }}
+              style={{
+                display: "block",
+                width: "100%",
+                textAlign: "left",
+                padding: "8px 10px",
+                background: "transparent",
+                border: "none",
+                borderBottom: `1px solid ${COLORS.cardBorder}`,
+                cursor: "pointer",
+                color: COLORS.textDim,
+                fontSize: 12,
+              }}
+            >
+              <div style={{ fontWeight: 600 }}>{a.name || a.type}</div>
+              <div style={{ color: COLORS.textFaint, fontSize: 11 }}>
+                {a.date ? formatDateFR(a.date.slice(0, 10)) : ""}
+                {a.distanceKm != null ? ` · ${a.distanceKm} km` : ""}
+                {a.durationSec ? ` · ${Math.round(a.durationSec / 60)} min` : ""}
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
