@@ -1187,8 +1187,18 @@ const refreshProspects = useCallback(async () => {
   const roleEffectif = role === "coach" && apercuClient ? "client" : role;
   const data = library && sessions !== null ? { ...library, sessions } : null;
 
+  // Thème "duo" : repère visuel (accent violet au lieu d'orange) pour le
+  // second client d'un duo lié, uniquement côté coach — jamais depuis le
+  // compte du client lui-même, qui garde toujours la même identité visuelle.
+  let duoAccentVars = null;
+  if (role === "coach" && activeClient && activeClient.duoPartnerId) {
+    const idxActive = clients.findIndex((c) => c.id === activeClient.id);
+    const idxPartner = clients.findIndex((c) => c.id === activeClient.duoPartnerId);
+    if (idxPartner !== -1 && idxActive > idxPartner) duoAccentVars = DUO_SECONDARY_ACCENT;
+  }
+
   return (
-    <div style={styles.app}>
+    <div style={{ ...styles.app, ...duoAccentVars }}>
          <Header
         role={role}
         roleEffectif={roleEffectif}
@@ -1294,18 +1304,26 @@ bookings={bookings}
 const FONT_DISPLAY = "'Space Grotesk', 'Arial Black', sans-serif";
 const FONT_BODY = "'Inter', -apple-system, sans-serif";
 
+// accent / accent2 passent par des variables CSS (avec l'orange comme valeur
+// par défaut) pour pouvoir être remplacées localement — notamment par le
+// thème "duo" ci-dessous, qui bascule en violet pour le second client d'un
+// duo de coaching semi-privé sans toucher au reste de la palette.
 const COLORS = {
   bg: "#0F0D0B",
   bg2: "#1A1613",
   card: "#211C18",
   cardBorder: "#3A2F26",
-  accent: "#FF7A1A",
-  accent2: "#FFB066",
+  accent: "var(--color-accent, #FF7A1A)",
+  accent2: "var(--color-accent2, #FFB066)",
   text: "#FAF8F5",
   textDim: "#C9BFB4",
   textFaint: "#8A7C6E",
   danger: "#FF6B6B",
 };
+
+// Couleurs du thème "duo" appliquées au second client (dans l'ordre de
+// création) d'une paire liée en coaching semi-privé.
+const DUO_SECONDARY_ACCENT = { "--color-accent": "#9B5CF6", "--color-accent2": "#CBB2FF" };
 
 function RoleSelect({ onChoose }) {
   return (
