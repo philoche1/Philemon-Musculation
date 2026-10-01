@@ -750,7 +750,11 @@ useEffect(() => {
   };
 
   const deleteClient = async (id) => {
-  const newClients = (clients || []).filter((c) => c.id !== id);
+  // Si le client supprimé était lié en duo à un autre, on délie aussi
+  // l'autre client pour ne pas laisser un lien pointant vers un id mort.
+  const newClients = (clients || [])
+    .filter((c) => c.id !== id)
+    .map((c) => (c.duoPartnerId === id ? { ...c, duoPartnerId: null } : c));
   setClients(newClients);
   try { await window.storage.set(CLIENTS_KEY, JSON.stringify(newClients), true); } catch (e) {}
   try { await window.storage.delete(sessionsKey(id), true); } catch (e) {}
@@ -758,6 +762,22 @@ useEffect(() => {
   try { await window.storage.delete(bookingsKey(id), true); } catch (e) {}
   if (clientId === id) setClientId(null);
 };
+
+  // Lie (ou délie, si partnerId est null) deux clients en "duo" de coaching
+  // semi-privé : chacun pointe vers l'autre (lien symétrique), pour pouvoir
+  // basculer de l'un à l'autre en un clic pendant une séance.
+  const setDuoPartner = async (clientIdA, partnerId) => {
+    const prev = (clients || []).find((c) => c.id === clientIdA);
+    const prevPartnerId = prev ? prev.duoPartnerId : null;
+    const newClients = (clients || []).map((c) => {
+      if (c.id === clientIdA) return { ...c, duoPartnerId: partnerId || null };
+      if (partnerId && c.id === partnerId) return { ...c, duoPartnerId: clientIdA };
+      if (prevPartnerId && c.id === prevPartnerId) return { ...c, duoPartnerId: null };
+      return c;
+    });
+    setClients(newClients);
+    try { await window.storage.set(CLIENTS_KEY, JSON.stringify(newClients), true); } catch (e) {}
+  };
 
 const addProspect = useCallback(async (data) => {
   const newP = { id: uid("prospect"), stage: 0, ...data };
@@ -1156,6 +1176,7 @@ const refreshProspects = useCallback(async () => {
         onLogin={loginClient}
         onResendWelcome={renvoyerEmailBienvenue}
         onForgotPin={forgotPin}
+        onSetDuoPartner={setDuoPartner}
       />
         <InstallAppBanner />
       </>
@@ -1179,6 +1200,8 @@ const refreshProspects = useCallback(async () => {
         onChangeClient={changeClient}
         saving={saving}
         onLogoutCoach={logoutCoach}
+        duoPartner={role === "coach" && activeClient && activeClient.duoPartnerId ? clients.find((c) => c.id === activeClient.duoPartnerId) : null}
+        onSwitchToDuoPartner={(id) => chooseClient(id)}
       />
       <div style={styles.body}>
        {!data || !sessionsLoaded || !bookingsLoaded ? (
@@ -1412,14 +1435,15 @@ function CoachAuth({ hasAccount, onCreate, onLogin, onChangeRole }) {
   );
 }
 
-function ClientSelect({ clients, role, onChoose, onAdd, onDelete, onLogin, onChangeRole, onResendWelcome, onForgotPin }) {
+function ClientSelect({ clients, role, onChoose, onAdd, onDelete, onLogin, onChangeRole, onResendWelcome, onForgotPin, onSetDuoPartner }) {
   if (role === "coach") {
-    return <CoachClientPicker clients={clients} onChoose={onChoose} onAdd={onAdd} onDelete={onDelete} onChangeRole={onChangeRole} onResendWelcome={onResendWelcome} />;
+    return <CoachClientPicker clients={clients} onChoose={onChoose} onAdd={onAdd} onDelete={onDelete} onChangeRole={onChangeRole} onResendWelcome={onResendWelcome} onSetDuoPartner={onSetDuoPartner} />;
   }
   return <ClientLogin onLogin={onLogin} onChoose={onChoose} onChangeRole={onChangeRole} onForgotPin={onForgotPin} />;
 }
 
-function CoachClientPicker({ clients, onChoose, onAdd, onDelete, onChangeRole, onResendWelcome }) {
+function CoachClientPicker({ clients, onChoose, onAdd, onDelete, onChangeRole, onResendWelcome, onSetDuoPartner }) {
+  const [linkingId, setLinkingId] = useState(null);
   const [showAdd, setShowAdd] = useState(clients.length === 0);
    const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -1455,8 +1479,11 @@ function CoachClientPicker({ clients, onChoose, onAdd, onDelete, onChangeRole, o
         </p>
     
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
-        {clients.map((c) => (
-  <div key={c.id} style={{ display: "flex", alignItems: "stretch", gap: 8 }}>
+        {clients.map((c) => {
+          const partner = c.duoPartnerId ? clients.find((o) => o.id === c.duoPartnerId) : null;
+          return (
+  <div key={c.id}>
+  <div style={{ display: "flex", alignItems: "stretch", gap: 8 }}>
     <button style={{ ...styles.clientBtn, flex: 1 }} onClick={() => onChoose(c.id)}>
       <span style={{ width: 32, height: 32, borderRadius: "50%", background: COLORS.accent, color: COLORS.bg, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT_DISPLAY, fontSize: 14, flexShrink: 0 }}>
         {c.name.slice(0, 1).toUpperCase()}
@@ -1465,8 +1492,23 @@ function CoachClientPicker({ clients, onChoose, onAdd, onDelete, onChangeRole, o
         <span style={{ display: "block", fontFamily: FONT_BODY, fontSize: 14, color: COLORS.text, fontWeight: 600 }}>{c.name}</span>
         <span style={{ display: "block", fontSize: 11, color: COLORS.textDim }}>{c.email}</span>
         <span style={{ display: "block", fontSize: 11, color: COLORS.textFaint }}>Code d'accès client : {c.pin}</span>
+        {partner && (
+          <span style={{ display: "block", fontSize: 11, color: COLORS.accent2 }}>🔗 Duo avec {partner.name}</span>
+        )}
       </span>
     </button>
+    {onSetDuoPartner && (
+      <button
+        style={{ ...styles.secondaryBtn, padding: "0 14px" }}
+        onClick={(e) => {
+          e.stopPropagation();
+          setLinkingId(linkingId === c.id ? null : c.id);
+        }}
+        title="Lier en duo de coaching semi-privé"
+      >
+        🔗
+      </button>
+    )}
     <button
       style={{ ...styles.secondaryBtn, padding: "0 14px" }}
       onClick={(e) => {
@@ -1488,7 +1530,27 @@ function CoachClientPicker({ clients, onChoose, onAdd, onDelete, onChangeRole, o
       Suppr.
     </button>
   </div>
-))}
+  {linkingId === c.id && onSetDuoPartner && (
+    <div style={{ ...styles.card, marginTop: 6, padding: 10, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+      <span style={{ fontSize: 12, color: COLORS.textDim }}>Lier {c.name} en duo avec :</span>
+      <select
+        style={{ ...styles.textInput, width: "auto", flex: "1 1 160px" }}
+        value={c.duoPartnerId || ""}
+        onChange={(e) => {
+          onSetDuoPartner(c.id, e.target.value || null);
+          setLinkingId(null);
+        }}
+      >
+        <option value="">Aucun</option>
+        {clients.filter((o) => o.id !== c.id).map((o) => (
+          <option key={o.id} value={o.id}>{o.name}</option>
+        ))}
+      </select>
+    </div>
+  )}
+  </div>
+          );
+        })}
         </div>
 
         {!showAdd ? (
@@ -1781,7 +1843,7 @@ function ClientLogin({ onLogin, onChoose, onChangeRole, onForgotPin }) {
   );
 }
 
-function Header({ role, roleEffectif, view, setView, clientName, onChangeClient, saving, onLogoutCoach, apercuClient, onToggleApercuClient }) {
+function Header({ role, roleEffectif, view, setView, clientName, onChangeClient, saving, onLogoutCoach, apercuClient, onToggleApercuClient, duoPartner, onSwitchToDuoPartner }) {
   const tabs = [
     { id: "profil", label: "Profil" },
     { id: "suivi", label: "Suivi" },
@@ -1812,6 +1874,15 @@ function Header({ role, roleEffectif, view, setView, clientName, onChangeClient,
             <button style={styles.linkBtn} onClick={onLogoutCoach}>déconnexion</button>
           )}
           <span style={{ ...styles.roleBadge, background: "rgba(255,176,102,0.15)", color: COLORS.accent2 }}>{clientName}</span>
+          {duoPartner && (
+            <button
+              style={{ ...styles.linkBtn, fontWeight: 700 }}
+              onClick={() => onSwitchToDuoPartner(duoPartner.id)}
+              title={`Basculer vers ${duoPartner.name} (duo de coaching semi-privé)`}
+            >
+              ⇄ {duoPartner.name}
+            </button>
+          )}
           <button style={styles.linkBtn} onClick={onChangeClient}>client</button>
         </div>
       </div>
