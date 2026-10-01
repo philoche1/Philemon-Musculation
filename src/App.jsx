@@ -750,6 +750,14 @@ useEffect(() => {
   };
 
   const chooseClient = async (id) => {
+    // Capture la position de défilement du client qu'on quitte avant de
+    // basculer, pendant qu'elle est encore fiable (avant que le contenu ne
+    // se réduise le temps du rechargement, ce qui ferait "sauter" le
+    // scroll et fausserait une sauvegarde faite après coup).
+    if (view === "suivi") {
+      const leavingClient = (clients || []).find((c) => c.id === clientId);
+      if (leavingClient) saveScrollPosition(leavingClient.id);
+    }
     setClientId(id);
     try { await window.storage.set(CLIENT_CHOICE_KEY, id, false); } catch (e) {}
   };
@@ -3177,23 +3185,13 @@ function SuiviView({ data, persistSessions, role, activeClient, deleteProgrammeH
     [data.sessions]
   );
 
-  // Mémorise en continu la position de défilement du client affiché, pour
-  // pouvoir la restaurer exactement en revenant sur lui (ex. bascule duo).
+  // La position de défilement du client qu'on quitte est capturée au
+  // moment précis où on bascule (dans chooseClient, côté App), pas via une
+  // écoute en continu ici : un écouteur de scroll resté actif pendant que
+  // le contenu se réduit (démontage le temps du rechargement) risquait de
+  // capter le "saut" de scroll provoqué par cette réduction et d'écraser
+  // la bonne valeur par une quasi-zéro juste avant de basculer.
   const clientIdPourScroll = activeClient && activeClient.id;
-  useEffect(() => {
-    if (!clientIdPourScroll) return;
-    let ticking = false;
-    const onScroll = () => {
-      if (ticking) return;
-      ticking = true;
-      requestAnimationFrame(() => {
-        saveScrollPosition(clientIdPourScroll);
-        ticking = false;
-      });
-    };
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
-  }, [clientIdPourScroll]);
 
   // Restaure cette position en revenant sur ce client, une seule fois par
   // arrivée (pour ne pas lutter contre un défilement manuel ensuite). Le
