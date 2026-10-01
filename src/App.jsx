@@ -422,6 +422,12 @@ export default function App() {
    const [clientId, setClientId] = useState(null);
   const [clientChoiceLoaded, setClientChoiceLoaded] = useState(false);
   const [clientRecord, setClientRecord] = useState(null); // données du client connecté (rôle client uniquement)
+  // Séance "ouverte" dans l'onglet Suivi, mémorisée par client : le composant
+  // SuiviView peut être démonté/remonté le temps que les données d'un client
+  // se rechargent (notamment en basculant entre les deux clients d'un duo),
+  // donc un simple état local à SuiviView oublierait quelle séance était
+  // ouverte en revenant sur le premier client.
+  const [expandedSessionByClient, setExpandedSessionByClient] = useState({});
 
   const [coachAccount, setCoachAccount] = useState(null);
   const [coachAccountLoaded, setCoachAccountLoaded] = useState(false);
@@ -1187,6 +1193,16 @@ const refreshProspects = useCallback(async () => {
   const roleEffectif = role === "coach" && apercuClient ? "client" : role;
   const data = library && sessions !== null ? { ...library, sessions } : null;
 
+  const expandedSessionId = activeClient ? expandedSessionByClient[activeClient.id] || null : null;
+  const setExpandedSessionId = (updater) => {
+    if (!activeClient) return;
+    setExpandedSessionByClient((prev) => {
+      const cur = prev[activeClient.id] != null ? prev[activeClient.id] : null;
+      const next = typeof updater === "function" ? updater(cur) : updater;
+      return { ...prev, [activeClient.id]: next };
+    });
+  };
+
   // Thème "duo" : repère visuel (accent violet au lieu d'orange) pour le
   // second client d'un duo lié, uniquement côté coach — jamais depuis le
   // compte du client lui-même, qui garde toujours la même identité visuelle.
@@ -1259,6 +1275,8 @@ bookings={bookings}
                 deleteProgrammeDistancielHistorique={deleteProgrammeDistancielHistorique}
                 validateDistancielSession={validateDistancielSession}
                 deleteManualBooking={deleteManualBooking}
+                expandedSessionId={expandedSessionId}
+                setExpandedSessionId={setExpandedSessionId}
               />
             )}
             {view === "progression" && <ProgressionView data={data} />}
@@ -3104,9 +3122,13 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
   );
 }
 
-function SuiviView({ data, persistSessions, role, activeClient, deleteProgrammeHistorique, deleteProgrammeDistancielHistorique, validateDistancielSession, deleteManualBooking }) {
+function SuiviView({ data, persistSessions, role, activeClient, deleteProgrammeHistorique, deleteProgrammeDistancielHistorique, validateDistancielSession, deleteManualBooking, expandedSessionId, setExpandedSessionId }) {
   const exercises = exMap(data);
-  const [expanded, setExpanded] = useState(null);
+  // La séance "ouverte" est mémorisée par le composant parent (par client),
+  // pour survivre à un démontage/remontage de SuiviView (ex. en basculant
+  // entre les deux clients d'un duo le temps que les données rechargent).
+  const expanded = expandedSessionId;
+  const setExpanded = setExpandedSessionId;
   const [showNew, setShowNew] = useState(false);
   const [quickDate, setQuickDate] = useState(todayISO());
   const [exerciseNotes, setExerciseNotes] = useState({});
