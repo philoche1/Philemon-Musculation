@@ -3195,22 +3195,24 @@ function SuiviView({ data, persistSessions, role, activeClient, deleteProgrammeH
     return () => window.removeEventListener("scroll", onScroll);
   }, [clientIdPourScroll]);
 
-  // Restaure cette position une fois que le contenu (séance dépliée
-  // comprise) a eu le temps de se rendre, une seule fois par arrivée sur ce
-  // client (pour ne pas lutter contre un défilement manuel de l'utilisateur).
+  // Restaure cette position en revenant sur ce client, une seule fois par
+  // arrivée (pour ne pas lutter contre un défilement manuel ensuite). Le
+  // contenu (séance dépliée, notes chargées en différé...) peut encore
+  // grandir après le premier rendu, donc on réapplique le scroll plusieurs
+  // fois sur ~1,5s plutôt qu'une seule fois trop tôt. Ne dépend que du
+  // client (pas de "expanded"/"data.sessions") pour que ces re-rendus en
+  // cascade n'annulent pas les tentatives en cours.
   const scrollRestauréPourRef = useRef(null);
   useEffect(() => {
     if (!clientIdPourScroll) return;
     if (scrollRestauréPourRef.current === clientIdPourScroll) return;
-    const raf1 = requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        const y = getScrollPosition(clientIdPourScroll);
-        if (y > 0) window.scrollTo(0, y);
-        scrollRestauréPourRef.current = clientIdPourScroll;
-      });
-    });
-    return () => cancelAnimationFrame(raf1);
-  }, [clientIdPourScroll, expanded, data.sessions]);
+    scrollRestauréPourRef.current = clientIdPourScroll;
+    const y = getScrollPosition(clientIdPourScroll);
+    if (y <= 0) return;
+    const delays = [0, 50, 120, 250, 450, 700, 1000, 1500];
+    const timers = delays.map((delay) => setTimeout(() => window.scrollTo(0, y), delay));
+    return () => timers.forEach(clearTimeout);
+  }, [clientIdPourScroll]);
 
   useEffect(() => {
     if (!activeClient) return;
