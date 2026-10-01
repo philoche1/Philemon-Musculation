@@ -1847,17 +1847,20 @@ function ClientLogin({ onLogin, onChoose, onChangeRole, onForgotPin }) {
 // façon disques d'haltère, reconstitué en SVG à partir de la carte de visite
 // (fond noir, barres orange, pouls blanc).
 function BrandLogo({ size = 22 }) {
+  // Le pouls domine visuellement (comme sur la carte de visite) : ses pics
+  // dépassent largement la hauteur des barres, qui restent fines et
+  // discrètes en arrière-plan.
   return (
-    <svg width={size} height={size * 0.72} viewBox="0 0 64 46" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ flexShrink: 0 }}>
-      <rect x="2" y="13" width="7" height="20" rx="3" fill={COLORS.accent} />
-      <rect x="13" y="6" width="7" height="34" rx="3" fill={COLORS.accent} />
-      <rect x="44" y="6" width="7" height="34" rx="3" fill={COLORS.accent} />
-      <rect x="55" y="13" width="7" height="20" rx="3" fill={COLORS.accent} />
+    <svg width={size} height={size * 0.82} viewBox="0 0 64 54" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ flexShrink: 0 }}>
+      <rect x="3" y="20" width="6" height="14" rx="2.5" fill={COLORS.accent} />
+      <rect x="13" y="16" width="6" height="22" rx="2.5" fill={COLORS.accent} />
+      <rect x="45" y="16" width="6" height="22" rx="2.5" fill={COLORS.accent} />
+      <rect x="55" y="20" width="6" height="14" rx="2.5" fill={COLORS.accent} />
       <polyline
-        points="18,23 25,23 29,8 35,38 39,23 46,23"
+        points="18,27 24,27 28,3 35,51 39,27 46,27"
         fill="none"
         stroke={COLORS.text}
-        strokeWidth="3.4"
+        strokeWidth="3.2"
         strokeLinecap="round"
         strokeLinejoin="round"
       />
