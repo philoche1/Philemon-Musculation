@@ -426,8 +426,17 @@ export default function App() {
   // SuiviView peut être démonté/remonté le temps que les données d'un client
   // se rechargent (notamment en basculant entre les deux clients d'un duo),
   // donc un simple état local à SuiviView oublierait quelle séance était
-  // ouverte en revenant sur le premier client.
-  const [expandedSessionByClient, setExpandedSessionByClient] = useState({});
+  // ouverte en revenant sur le premier client. On double la mémoire React
+  // d'une sauvegarde dans localStorage pour que ça survive aussi à un
+  // rechargement complet de la page (PWA, bascule d'app, etc.).
+  const [expandedSessionByClient, setExpandedSessionByClient] = useState(() => {
+    try {
+      const raw = window.localStorage.getItem("musculation-expanded-session-v1");
+      return raw ? JSON.parse(raw) : {};
+    } catch (e) {
+      return {};
+    }
+  });
 
   const [coachAccount, setCoachAccount] = useState(null);
   const [coachAccountLoaded, setCoachAccountLoaded] = useState(false);
@@ -1199,7 +1208,9 @@ const refreshProspects = useCallback(async () => {
     setExpandedSessionByClient((prev) => {
       const cur = prev[activeClient.id] != null ? prev[activeClient.id] : null;
       const next = typeof updater === "function" ? updater(cur) : updater;
-      return { ...prev, [activeClient.id]: next };
+      const updated = { ...prev, [activeClient.id]: next };
+      try { window.localStorage.setItem("musculation-expanded-session-v1", JSON.stringify(updated)); } catch (e) {}
+      return updated;
     });
   };
 
