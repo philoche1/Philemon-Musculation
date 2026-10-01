@@ -20,6 +20,34 @@ const stravaTokensKey = (clientId) => `strava-tokens-v1-${clientId}`;
 const PROSPECTS_KEY = "prospects-v1";
 const PROSPECT_STAGES = ["À contacter", "RDV pris", "Séance faite", "Client", "Perdu"];
 
+// Position de défilement de l'onglet Suivi, mémorisée par client (mémoire
+// volatile pendant la session de navigation + sauvegarde sur l'appareil),
+// pour qu'en revenant sur un client on retrouve la séance ouverte ET
+// l'endroit exact où on en était, sans avoir à refaire défiler.
+const SCROLL_POSITION_STORAGE_KEY = "musculation-scroll-position-v1";
+const scrollPositionsByClient = {};
+function saveScrollPosition(clientId) {
+  if (!clientId) return;
+  scrollPositionsByClient[clientId] = window.scrollY;
+  try {
+    const raw = window.localStorage.getItem(SCROLL_POSITION_STORAGE_KEY);
+    const all = raw ? JSON.parse(raw) : {};
+    all[clientId] = window.scrollY;
+    window.localStorage.setItem(SCROLL_POSITION_STORAGE_KEY, JSON.stringify(all));
+  } catch (e) {}
+}
+function getScrollPosition(clientId) {
+  if (!clientId) return 0;
+  if (scrollPositionsByClient[clientId] != null) return scrollPositionsByClient[clientId];
+  try {
+    const raw = window.localStorage.getItem(SCROLL_POSITION_STORAGE_KEY);
+    const all = raw ? JSON.parse(raw) : {};
+    return all[clientId] || 0;
+  } catch (e) {
+    return 0;
+  }
+}
+
 // Affiche une photo en plein écran (clic n'importe où pour fermer), pour
 // pouvoir l'agrandir depuis le journal photo par ex.
 function PhotoLightbox({ photo, onClose }) {
@@ -3148,6 +3176,41 @@ function SuiviView({ data, persistSessions, role, activeClient, deleteProgrammeH
     () => [...data.sessions].sort((a, b) => (a.date < b.date ? 1 : -1)),
     [data.sessions]
   );
+
+  // Mémorise en continu la position de défilement du client affiché, pour
+  // pouvoir la restaurer exactement en revenant sur lui (ex. bascule duo).
+  const clientIdPourScroll = activeClient && activeClient.id;
+  useEffect(() => {
+    if (!clientIdPourScroll) return;
+    let ticking = false;
+    const onScroll = () => {
+      if (ticking) return;
+      ticking = true;
+      requestAnimationFrame(() => {
+        saveScrollPosition(clientIdPourScroll);
+        ticking = false;
+      });
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, [clientIdPourScroll]);
+
+  // Restaure cette position une fois que le contenu (séance dépliée
+  // comprise) a eu le temps de se rendre, une seule fois par arrivée sur ce
+  // client (pour ne pas lutter contre un défilement manuel de l'utilisateur).
+  const scrollRestauréPourRef = useRef(null);
+  useEffect(() => {
+    if (!clientIdPourScroll) return;
+    if (scrollRestauréPourRef.current === clientIdPourScroll) return;
+    const raf1 = requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const y = getScrollPosition(clientIdPourScroll);
+        if (y > 0) window.scrollTo(0, y);
+        scrollRestauréPourRef.current = clientIdPourScroll;
+      });
+    });
+    return () => cancelAnimationFrame(raf1);
+  }, [clientIdPourScroll, expanded, data.sessions]);
 
   useEffect(() => {
     if (!activeClient) return;
