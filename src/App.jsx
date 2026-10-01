@@ -1843,6 +1843,28 @@ function ClientLogin({ onLogin, onChoose, onChangeRole, onForgotPin }) {
   );
 }
 
+// Logo de la marque : un "pouls" (fréquence cardiaque) encadré par 4 barres
+// façon disques d'haltère, reconstitué en SVG à partir de la carte de visite
+// (fond noir, barres orange, pouls blanc).
+function BrandLogo({ size = 22 }) {
+  return (
+    <svg width={size} height={size * 0.72} viewBox="0 0 64 46" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ flexShrink: 0 }}>
+      <rect x="2" y="13" width="7" height="20" rx="3" fill={COLORS.accent} />
+      <rect x="13" y="6" width="7" height="34" rx="3" fill={COLORS.accent} />
+      <rect x="44" y="6" width="7" height="34" rx="3" fill={COLORS.accent} />
+      <rect x="55" y="13" width="7" height="20" rx="3" fill={COLORS.accent} />
+      <polyline
+        points="18,23 25,23 29,8 35,38 39,23 46,23"
+        fill="none"
+        stroke={COLORS.text}
+        strokeWidth="3.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 function Header({ role, roleEffectif, view, setView, clientName, onChangeClient, saving, onLogoutCoach, apercuClient, onToggleApercuClient, duoPartner, onSwitchToDuoPartner }) {
   const tabs = [
     { id: "profil", label: "Profil" },
@@ -1859,8 +1881,11 @@ function Header({ role, roleEffectif, view, setView, clientName, onChangeClient,
   return (
     <div style={styles.header}>
       <div style={styles.headerTop}>
-        <div style={{ fontFamily: FONT_DISPLAY, fontSize: 15, letterSpacing: 2, color: COLORS.accent, textTransform: "uppercase" }}>
-          Philémon Musculation
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <BrandLogo />
+          <div style={{ fontFamily: FONT_DISPLAY, fontSize: 15, letterSpacing: 2, textTransform: "uppercase" }}>
+            <span style={{ color: COLORS.text }}>Philémon</span> <span style={{ color: COLORS.accent }}>Musculation</span>
+          </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
           {saving && <span style={{ fontSize: 11, color: COLORS.textFaint }}>Enregistrement…</span>}
