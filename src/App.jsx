@@ -1324,6 +1324,7 @@ bookings={bookings}
                 deleteManualBooking={deleteManualBooking}
                 expandedSessionId={expandedSessionId}
                 setExpandedSessionId={setExpandedSessionId}
+                persistLibrary={persistLibrary}
               />
             )}
             {view === "progression" && <ProgressionView data={data} />}
@@ -3169,7 +3170,7 @@ function ProfileView({ profile, profileLoaded, persistProfile, activeClient, rol
   );
 }
 
-function SuiviView({ data, persistSessions, role, activeClient, deleteProgrammeHistorique, deleteProgrammeDistancielHistorique, validateDistancielSession, deleteManualBooking, expandedSessionId, setExpandedSessionId }) {
+function SuiviView({ data, persistSessions, role, activeClient, deleteProgrammeHistorique, deleteProgrammeDistancielHistorique, validateDistancielSession, deleteManualBooking, expandedSessionId, setExpandedSessionId, persistLibrary }) {
   const exercises = exMap(data);
   // La séance "ouverte" est mémorisée par le composant parent (par client),
   // pour survivre à un démontage/remontage de SuiviView (ex. en basculant
@@ -3232,6 +3233,26 @@ function SuiviView({ data, persistSessions, role, activeClient, deleteProgrammeH
     if (activeClient) {
       await window.storage.set(exerciseNotesKey(activeClient.id), JSON.stringify(updated), true);
     }
+  };
+
+  // Les réglages du circuit d'échauffement (effort/repos/tours), modifiés
+  // depuis la séance en cours, sont enregistrés sur le type de séance lui
+  // -même (plutôt que perdus à la fermeture) pour devenir le nouveau
+  // réglage par défaut la prochaine fois que ce type de séance est utilisé.
+  const updateSeanceTypeWarmup = (seanceTypeId, patch) => {
+    if (!seanceTypeId || !persistLibrary) return;
+    const newSeanceTypes = data.seanceTypes.map((st) => (st.id === seanceTypeId ? { ...st, ...patch } : st));
+    persistLibrary({
+      exercises: data.exercises,
+      seanceTypes: newSeanceTypes,
+      programs: data.programs,
+      ctTypes: data.ctTypes,
+      ctPrograms: data.ctPrograms,
+      alimentationVideos: data.alimentationVideos,
+      ctLevelNames: data.ctLevelNames,
+      recettes: data.recettes,
+      plansAlimentairesDetailes: data.plansAlimentairesDetailes,
+    });
   };
 
   // Connexion Strava du client : au retour de l'autorisation Strava (voir
@@ -3516,6 +3537,7 @@ function SuiviView({ data, persistSessions, role, activeClient, deleteProgrammeH
             onExpand={() => setExpanded(session.id)}
             onSave={(updates) => updateSession(session.id, updates)}
             onDelete={() => deleteSession(session.id)}
+            onUpdateWarmupSettings={updateSeanceTypeWarmup}
           />
         ))}
       </div>
@@ -3893,6 +3915,7 @@ function CircuitTimer({
   customSummary = null,
   headerExtra = null,
   bare = false,
+  onSettingsChange = null,
 }) {
   const [rounds, setRounds] = useState(defaultRounds);
   const [workSeconds, setWorkSeconds] = useState(defaultWork);
@@ -3903,6 +3926,24 @@ function CircuitTimer({
   const [phaseIndex, setPhaseIndex] = useState(0);
   const [secondsLeft, setSecondsLeft] = useState(0);
   const [running, setRunning] = useState(false);
+
+  // Enregistre les réglages (effort/repos/tours) modifiés par le coach,
+  // avec un court délai pour regrouper les saisies rapides en un seul
+  // enregistrement plutôt qu'un par caractère tapé. On ignore le tout
+  // premier rendu (ces valeurs sont déjà celles enregistrées).
+  const premierRenduRef = useRef(true);
+  useEffect(() => {
+    if (premierRenduRef.current) {
+      premierRenduRef.current = false;
+      return;
+    }
+    if (!onSettingsChange) return;
+    if (rounds === "") return;
+    const id = setTimeout(() => {
+      onSettingsChange({ rounds, workSeconds, restSeconds, roundRestSeconds });
+    }, 600);
+    return () => clearTimeout(id);
+  }, [rounds, workSeconds, restSeconds, roundRestSeconds]);
 
   const phases = customPhases && customPhases.length
     ? customPhases
@@ -4175,7 +4216,7 @@ function groupBySeries(entries) {
 const DEFAULT_BILAN = { difficulte: null, sensation: null, douleur: "", remarque: "" };
 const DEFAULT_BILAN_AVANT = { forme: null, sommeil: null, alimentation: null, douleur: "", remarque: "" };
 
-function SessionCard({ session, exercises, allSessions, programName, isDistanciel, seanceType, role, clientId, stravaTokens, onStravaTokensChange, exerciseNotes, onSaveNote, expanded, onToggle, onExpand, onSave, onDelete }) {
+function SessionCard({ session, exercises, allSessions, programName, isDistanciel, seanceType, role, clientId, stravaTokens, onStravaTokensChange, exerciseNotes, onSaveNote, expanded, onToggle, onExpand, onSave, onDelete, onUpdateWarmupSettings }) {
   const [local, setLocal] = useState(session.entries);
   const [bilan, setBilan] = useState(session.bilan || DEFAULT_BILAN);
   const [bilanAvant, setBilanAvant] = useState(session.bilanAvant || DEFAULT_BILAN_AVANT);
@@ -4810,8 +4851,11 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                 />
               )}
               {isWarmupCircuit && (() => {
-                const computedRounds = Math.max(1, ...ids.map((id) => (grouped[id] ? grouped[id].length : WARMUP_SERIES_COUNT)));
-                const warmupRounds = (seanceType && seanceType.warmupRounds != null) ? seanceType.warmupRounds : computedRounds;
+                // Le nombre de tours par défaut du circuit d'échauffement est
+                // fixe (3), indépendant du nombre de séries déjà saisies pour
+                // les exercices — sauf si le coach l'a explicitement réglé
+                // pour ce type de séance, auquel cas ce réglage est repris.
+                const warmupRounds = (seanceType && seanceType.warmupRounds != null) ? seanceType.warmupRounds : 3;
                 return (
                   <CircuitTimer
                     key={ids.join(",") + "_" + warmupRounds}
@@ -4821,6 +4865,12 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                     defaultRest={(seanceType && seanceType.warmupRestSeconds != null) ? seanceType.warmupRestSeconds : WARMUP_REST_SECONDS}
                     defaultRoundRest={(seanceType && seanceType.warmupRoundRestSeconds != null) ? seanceType.warmupRoundRestSeconds : WARMUP_ROUND_REST_SECONDS}
                     exerciseNames={ids.map((id) => (exercisesAliased[id] ? exercisesAliased[id].nom.replace(/\n/g, " ") : "Exercice"))}
+                    onSettingsChange={seanceType ? (s) => onUpdateWarmupSettings(seanceType.id, {
+                      warmupRounds: s.rounds,
+                      warmupWorkSeconds: s.workSeconds,
+                      warmupRestSeconds: s.restSeconds,
+                      warmupRoundRestSeconds: s.roundRestSeconds,
+                    }) : null}
                     headerExtra={
                       <label style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer", fontSize: 11, color: COLORS.textDim, whiteSpace: "nowrap" }}>
                         <input
