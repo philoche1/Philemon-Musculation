@@ -4961,7 +4961,8 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                 const cardio = isCardioExercise(ex);
                 const gainage = isGainageExercise(ex);
                 const prevCardio = cardio ? previousCardioValues[exId] : null;
-                const showTimerBtn = ex && getExerciseZones(ex).some((z) => zoneLabel(z) === "BAS DU CORPS" || zoneLabel(z) === "HAUT DU CORPS");
+                // Dans un circuit, les temps de repos sont gérés par le chrono du circuit : pas de chronos "Set 1/2/3" par exercice.
+                const showTimerBtn = !hasCircuitTimer && ex && getExerciseZones(ex).some((z) => zoneLabel(z) === "BAS DU CORPS" || zoneLabel(z) === "HAUT DU CORPS");
                 const mySupersetId = rows[0] && rows[0].superset && supersetGroupsMap[rows[0].superset] ? rows[0].superset : null;
                 return (
                   <div key={exId} style={{ marginBottom: 14, ...(mySupersetId ? { borderLeft: `3px solid ${supersetColor(mySupersetId)}`, paddingLeft: 8 } : {}) }}>
@@ -4993,6 +4994,26 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                         >
                           🔗 Superset {supersetLabels[mySupersetId]}
                         </span>
+                      )}
+                      {showConsignesBtn && (
+                        <button
+                          style={{ ...styles.infoBtn, ...styles.infoBtnConsignes, ...(openConsignes[exId] ? styles.infoBtnActive : {}) }}
+                          onClick={() => setOpenConsignes((p) => ({ ...p, [exId]: !p[exId] }))}
+                          title="Voir les consignes"
+                          aria-label="Voir les consignes"
+                        >
+                          ℹ️
+                        </button>
+                      )}
+                      {showVideoBtn && (
+                        <button
+                          style={{ ...styles.infoBtn, ...styles.infoBtnVideo, ...(openVideo[exId] ? styles.infoBtnActive : {}) }}
+                          onClick={() => setOpenVideo((p) => ({ ...p, [exId]: !p[exId] }))}
+                          title="Voir la vidéo"
+                          aria-label="Voir la vidéo"
+                        >
+                          ▶️
+                        </button>
                       )}
                       <label style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer", fontSize: 11, fontWeight: 400, color: COLORS.textDim, whiteSpace: "nowrap", marginLeft: "auto" }}>
                         <input
@@ -5368,30 +5389,7 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                       );
                     })()}
                     {(mobility || endSession) ? (
-                      (showConsignesBtn || showVideoBtn) && (
-                        <div style={styles.entryRow}>
-                          {showConsignesBtn && (
-                            <button
-                              style={{ ...styles.infoBtn, ...styles.infoBtnConsignes, ...(openConsignes[exId] ? styles.infoBtnActive : {}) }}
-                              onClick={() => setOpenConsignes((p) => ({ ...p, [exId]: !p[exId] }))}
-                              title="Voir les consignes"
-                              aria-label="Voir les consignes"
-                            >
-                              ℹ️
-                            </button>
-                          )}
-                          {showVideoBtn && (
-                            <button
-                              style={{ ...styles.infoBtn, ...styles.infoBtnVideo, ...(openVideo[exId] ? styles.infoBtnActive : {}) }}
-                              onClick={() => setOpenVideo((p) => ({ ...p, [exId]: !p[exId] }))}
-                              title="Voir la vidéo"
-                              aria-label="Voir la vidéo"
-                            >
-                              ▶️
-                            </button>
-                          )}
-                        </div>
-                      )
+                      null
                     ) : cardio ? (
                       <>
                       <div style={rows[0] && rows[0].validee ? { ...styles.entryRow, ...styles.entryRowValidated } : styles.entryRow}>
@@ -5457,26 +5455,6 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                         )}
                         {prevCardio && (
                           <span style={styles.prevValue}>Dernière fois : {formatDureeHMS(prevCardio.reps)}</span>
-                        )}
-                        {showConsignesBtn && (
-                          <button
-                            style={{ ...styles.infoBtn, ...styles.infoBtnConsignes, ...(openConsignes[exId] ? styles.infoBtnActive : {}) }}
-                            onClick={() => setOpenConsignes((p) => ({ ...p, [exId]: !p[exId] }))}
-                            title="Voir les consignes"
-                            aria-label="Voir les consignes"
-                          >
-                            ℹ️
-                          </button>
-                        )}
-                        {showVideoBtn && (
-                          <button
-                            style={{ ...styles.infoBtn, ...styles.infoBtnVideo, ...(openVideo[exId] ? styles.infoBtnActive : {}) }}
-                            onClick={() => setOpenVideo((p) => ({ ...p, [exId]: !p[exId] }))}
-                            title="Voir la vidéo"
-                            aria-label="Voir la vidéo"
-                          >
-                            ▶️
-                          </button>
                         )}
                       </div>
                       <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6, overflowX: "auto", paddingBottom: 2 }}>
@@ -5679,7 +5657,7 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                             ))}
                           </span>
                         )}
-                        {gainage && (
+                        {gainage && !hasCircuitTimer && (
                           <button
                             style={{ ...styles.infoBtn, ...styles.infoBtnTimer, ...(openTimer[timerKey] ? styles.infoBtnActive : {}) }}
                             onClick={() => setOpenTimer((p) => ({ ...p, [timerKey]: !p[timerKey] }))}
@@ -5687,26 +5665,6 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                             aria-label="Chrono d'effort"
                           >
                             ⏱️ Chrono
-                          </button>
-                        )}
-                        {rIdx === 0 && showConsignesBtn && (
-                          <button
-                            style={{ ...styles.infoBtn, ...styles.infoBtnConsignes, ...(openConsignes[exId] ? styles.infoBtnActive : {}) }}
-                            onClick={() => setOpenConsignes((p) => ({ ...p, [exId]: !p[exId] }))}
-                            title="Voir les consignes"
-                            aria-label="Voir les consignes"
-                          >
-                            ℹ️
-                          </button>
-                        )}
-                        {rIdx === 0 && showVideoBtn && (
-                          <button
-                            style={{ ...styles.infoBtn, ...styles.infoBtnVideo, ...(openVideo[exId] ? styles.infoBtnActive : {}) }}
-                            onClick={() => setOpenVideo((p) => ({ ...p, [exId]: !p[exId] }))}
-                            title="Voir la vidéo"
-                            aria-label="Voir la vidéo"
-                          >
-                            ▶️
                           </button>
                         )}
                       </div>
@@ -5762,7 +5720,7 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                           + Palier (drop-set)
                         </button>
                       )}
-                      {gainage && openTimer[timerKey] && <GainageTimer defaultDuration={60} />}
+                      {gainage && !hasCircuitTimer && openTimer[timerKey] && <GainageTimer defaultDuration={60} />}
                       </React.Fragment>
                       );
                     })}
