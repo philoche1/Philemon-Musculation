@@ -9365,6 +9365,20 @@ function SeanceTypesView({ data, persistLibrary, role, activeClient }) {
     setEditingSeanceTypeId(null);
   };
 
+  // Duplique un type de séance (présentiel ou distanciel) : copie complète
+  // (exercices, mode/lieu, circuits, réglages...) insérée juste après
+  // l'original, puis ouverte en modification pour la renommer tout de suite.
+  const duplicateSeanceType = (st) => {
+    const copy = JSON.parse(JSON.stringify(st));
+    copy.id = uid("st");
+    copy.nom = `${st.nom} (copie)`;
+    const idx = data.seanceTypes.findIndex((x) => x.id === st.id);
+    const newSeanceTypes = [...data.seanceTypes];
+    newSeanceTypes.splice(idx + 1, 0, copy);
+    persistLibrary({ exercises: data.exercises, seanceTypes: newSeanceTypes, programs: data.programs, ctTypes: data.ctTypes, ctPrograms: data.ctPrograms, alimentationVideos: data.alimentationVideos, ctLevelNames: data.ctLevelNames, recettes: data.recettes, plansAlimentairesDetailes: data.plansAlimentairesDetailes });
+    setEditingSeanceTypeId(copy.id);
+  };
+
   const addCTType = (ct) => {
     const newLib = { ...data, ctTypes: [...data.ctTypes, { id: uid("ctst"), ...ct }] };
     persistLibrary({ exercises: newLib.exercises, seanceTypes: newLib.seanceTypes, programs: newLib.programs, ctTypes: newLib.ctTypes, ctPrograms: newLib.ctPrograms, alimentationVideos: newLib.alimentationVideos, ctLevelNames: newLib.ctLevelNames, recettes: newLib.recettes, plansAlimentairesDetailes: newLib.plansAlimentairesDetailes });
@@ -9440,7 +9454,10 @@ function SeanceTypesView({ data, persistLibrary, role, activeClient }) {
                     <div style={{ fontSize: 11, color: COLORS.textFaint }}>{st.exerciceIds.length} exercice{st.exerciceIds.length > 1 ? "s" : ""}</div>
                   </div>
                   {isCoach && (
-                    <button style={styles.linkBtn} onClick={() => setEditingSeanceTypeId(st.id)}>Modifier</button>
+                    <div style={{ display: "flex", gap: 12 }}>
+                      <button style={styles.linkBtn} onClick={() => duplicateSeanceType(st)}>Dupliquer</button>
+                      <button style={styles.linkBtn} onClick={() => setEditingSeanceTypeId(st.id)}>Modifier</button>
+                    </div>
                   )}
                 </div>
               )
