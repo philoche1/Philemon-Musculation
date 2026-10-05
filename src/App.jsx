@@ -817,6 +817,12 @@ useEffect(() => {
   // Lie (ou délie, si partnerId est null) deux clients en "duo" de coaching
   // semi-privé : chacun pointe vers l'autre (lien symétrique), pour pouvoir
   // basculer de l'un à l'autre en un clic pendant une séance.
+  const updateClient = async (id, updates) => {
+    const newClients = (clients || []).map((c) => (c.id === id ? { ...c, ...updates } : c));
+    setClients(newClients);
+    try { await window.storage.set(CLIENTS_KEY, JSON.stringify(newClients), true); } catch (e) {}
+  };
+
   const setDuoPartner = async (clientIdA, partnerId) => {
     const prev = (clients || []).find((c) => c.id === clientIdA);
     const prevPartnerId = prev ? prev.duoPartnerId : null;
@@ -1228,6 +1234,7 @@ const refreshProspects = useCallback(async () => {
         onResendWelcome={renvoyerEmailBienvenue}
         onForgotPin={forgotPin}
         onSetDuoPartner={setDuoPartner}
+        onUpdateClient={updateClient}
       />
         <InstallAppBanner />
       </>
@@ -1519,15 +1526,31 @@ function CoachAuth({ hasAccount, onCreate, onLogin, onChangeRole }) {
   );
 }
 
-function ClientSelect({ clients, role, onChoose, onAdd, onDelete, onLogin, onChangeRole, onResendWelcome, onForgotPin, onSetDuoPartner }) {
+function ClientSelect({ clients, role, onChoose, onAdd, onDelete, onLogin, onChangeRole, onResendWelcome, onForgotPin, onSetDuoPartner, onUpdateClient }) {
   if (role === "coach") {
-    return <CoachClientPicker clients={clients} onChoose={onChoose} onAdd={onAdd} onDelete={onDelete} onChangeRole={onChangeRole} onResendWelcome={onResendWelcome} onSetDuoPartner={onSetDuoPartner} />;
+    return <CoachClientPicker clients={clients} onChoose={onChoose} onAdd={onAdd} onDelete={onDelete} onChangeRole={onChangeRole} onResendWelcome={onResendWelcome} onSetDuoPartner={onSetDuoPartner} onUpdateClient={onUpdateClient} />;
   }
   return <ClientLogin onLogin={onLogin} onChoose={onChoose} onChangeRole={onChangeRole} onForgotPin={onForgotPin} />;
 }
 
-function CoachClientPicker({ clients, onChoose, onAdd, onDelete, onChangeRole, onResendWelcome, onSetDuoPartner }) {
+function CoachClientPicker({ clients, onChoose, onAdd, onDelete, onChangeRole, onResendWelcome, onSetDuoPartner, onUpdateClient }) {
   const [linkingId, setLinkingId] = useState(null);
+  const [editingId, setEditingId] = useState(null);
+  const [editName, setEditName] = useState("");
+  const [editEmail, setEditEmail] = useState("");
+  const editEmailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(editEmail.trim());
+  const editEmailTaken = editingId && clients.some((o) => o.id !== editingId && (o.email || "").toLowerCase() === editEmail.trim().toLowerCase());
+  const startEdit = (c) => {
+    if (editingId === c.id) { setEditingId(null); return; }
+    setEditingId(c.id);
+    setEditName(c.name || "");
+    setEditEmail(c.email || "");
+  };
+  const saveEdit = () => {
+    if (!editName.trim() || !editEmailValid || editEmailTaken) return;
+    onUpdateClient(editingId, { name: editName.trim(), email: editEmail.trim().toLowerCase() });
+    setEditingId(null);
+  };
   const [showAdd, setShowAdd] = useState(clients.length === 0);
    const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -1581,6 +1604,18 @@ function CoachClientPicker({ clients, onChoose, onAdd, onDelete, onChangeRole, o
         )}
       </span>
     </button>
+    {onUpdateClient && (
+      <button
+        style={{ ...styles.secondaryBtn, padding: "0 14px" }}
+        onClick={(e) => {
+          e.stopPropagation();
+          startEdit(c);
+        }}
+        title="Modifier le nom ou l'adresse email"
+      >
+        ✏️
+      </button>
+    )}
     {onSetDuoPartner && (
       <button
         style={{ ...styles.secondaryBtn, padding: "0 14px" }}
@@ -1614,6 +1649,20 @@ function CoachClientPicker({ clients, onChoose, onAdd, onDelete, onChangeRole, o
       Suppr.
     </button>
   </div>
+  {editingId === c.id && onUpdateClient && (
+    <div style={{ ...styles.card, marginTop: 6, padding: 10 }}>
+      <label style={styles.fieldLabel}>Nom du client</label>
+      <input style={styles.textInput} value={editName} onChange={(e) => setEditName(e.target.value)} />
+      <label style={styles.fieldLabel}>Adresse email</label>
+      <input style={styles.textInput} type="email" value={editEmail} onChange={(e) => setEditEmail(e.target.value)} />
+      {editEmail.trim() && !editEmailValid && <div style={{ color: COLORS.danger, fontSize: 12, marginBottom: 8 }}>Adresse email invalide.</div>}
+      {editEmailTaken && <div style={{ color: COLORS.danger, fontSize: 12, marginBottom: 8 }}>Cette adresse est déjà utilisée par un autre client.</div>}
+      <div style={{ display: "flex", gap: 8 }}>
+        <button style={styles.primaryBtn} disabled={!editName.trim() || !editEmailValid || editEmailTaken} onClick={saveEdit}>Enregistrer</button>
+        <button style={styles.secondaryBtn} onClick={() => setEditingId(null)}>Annuler</button>
+      </div>
+    </div>
+  )}
   {linkingId === c.id && onSetDuoPartner && (
     <div style={{ ...styles.card, marginTop: 6, padding: 10, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
       <span style={{ fontSize: 12, color: COLORS.textDim }}>Lier {c.name} en duo avec :</span>
