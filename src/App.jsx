@@ -278,6 +278,7 @@ function applyPreviousEntries(entries, previousMap, exercisesMap) {
       ...e,
       reps: !cardio && prev && prev.reps != null ? prev.reps : e.reps,
       charge: prev && prev.charge != null ? prev.charge : e.charge,
+      pdc: prev && prev.pdc != null ? prev.pdc : e.pdc,
       paliers: prev && prev.paliers && prev.paliers.length ? prev.paliers.map((p) => ({ ...p })) : undefined,
       validee: false,
     };
@@ -3904,11 +3905,19 @@ const CARDIO_METEO_OPTIONS = [
   { key: "vent", emoji: "💨", label: "Vent" },
 ];
 
-function buildCircuitPhases(exerciseNames, rounds, workSeconds, restSeconds, roundRestSeconds) {
+// Exercice unilatéral dans un circuit : tour 1 = droite, tour 2 = gauche, etc.
+// Avec un nombre de tours impair, le dernier tour se fait en alterné.
+function circuitSideLabel(roundIndex, rounds) {
+  if (rounds % 2 === 1 && roundIndex === rounds - 1) return "alternées";
+  return roundIndex % 2 === 0 ? "droite" : "gauche";
+}
+
+function buildCircuitPhases(exerciseNames, rounds, workSeconds, restSeconds, roundRestSeconds, exerciseSides) {
   const phases = [];
   for (let r = 0; r < rounds; r++) {
     exerciseNames.forEach((name, idx) => {
-      phases.push({ type: "work", label: name, duration: workSeconds, round: r + 1 });
+      const label = exerciseSides && exerciseSides[idx] ? `${name} — ${circuitSideLabel(r, rounds)}` : name;
+      phases.push({ type: "work", label, duration: workSeconds, round: r + 1 });
       const isLastExerciseOfRound = idx === exerciseNames.length - 1;
       const isVeryLast = r === rounds - 1 && isLastExerciseOfRound;
       if (isVeryLast) return;
@@ -3965,6 +3974,9 @@ function CircuitTimer({
   headerExtra = null,
   bare = false,
   onSettingsChange = null,
+  onRoundsChange = null,
+  onWorkSecondsChange = null,
+  exerciseSides = null,
 }) {
   const [rounds, setRounds] = useState(defaultRounds);
   const [workSeconds, setWorkSeconds] = useState(defaultWork);
@@ -3980,6 +3992,35 @@ function CircuitTimer({
   // avec un court délai pour regrouper les saisies rapides en un seul
   // enregistrement plutôt qu'un par caractère tapé. On ignore le tout
   // premier rendu (ces valeurs sont déjà celles enregistrées).
+  // Synchronise le temps de travail des gainages avec le temps d'effort du
+  // circuit : au montage (séries encore par défaut) puis à chaque changement.
+  const workMontageRef = useRef(true);
+  useEffect(() => {
+    if (!onWorkSecondsChange) return;
+    if (workMontageRef.current) {
+      workMontageRef.current = false;
+      onWorkSecondsChange(workSeconds, false);
+      return;
+    }
+    const id = setTimeout(() => onWorkSecondsChange(workSeconds, true), 400);
+    return () => clearTimeout(id);
+  }, [workSeconds]);
+
+  // Synchronise le nombre de séries des exercices avec le nombre de tours :
+  // au montage (ajout des séries manquantes) puis à chaque changement.
+  const roundsMontageRef = useRef(true);
+  useEffect(() => {
+    if (!onRoundsChange) return;
+    if (rounds === "" || !(Number(rounds) >= 1)) return;
+    if (roundsMontageRef.current) {
+      roundsMontageRef.current = false;
+      onRoundsChange(rounds, false);
+      return;
+    }
+    const id = setTimeout(() => onRoundsChange(rounds, true), 400);
+    return () => clearTimeout(id);
+  }, [rounds]);
+
   const premierRenduRef = useRef(true);
   useEffect(() => {
     if (premierRenduRef.current) {
@@ -3996,7 +4037,7 @@ function CircuitTimer({
 
   const phases = customPhases && customPhases.length
     ? customPhases
-    : buildCircuitPhases(exerciseNames, rounds, workSeconds, restSeconds, roundRestSeconds);
+    : buildCircuitPhases(exerciseNames, rounds, workSeconds, restSeconds, roundRestSeconds, exerciseSides);
   const currentPhase = phases[phaseIndex];
   const done = started && !running && secondsLeft === 0 && phaseIndex >= phases.length - 1;
 
@@ -4635,6 +4676,15 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
     return map;
   }, [allSessions, session.id, session.date, session.entries]);
 
+  // "Poids du corps" à la place de la charge en kg, par série. Par défaut :
+  // le réglage de l'exercice (poidsDuCorps), sauf si la série a son propre choix.
+  const isPdc = (row, ex) => (row.pdc != null ? !!row.pdc : !!(ex && ex.poidsDuCorps));
+  const togglePdc = (idx, ex) => {
+    const copy = local.map((e, i) => (i === idx ? { ...e, pdc: !isPdc(e, ex), charge: null } : e));
+    setLocal(copy);
+    onSave({ entries: copy, bilan, bilanAvant, niveaux: niveauxParExercice });
+  };
+
   const updateField = (idx, field, value) => {
     const copy = local.map((e, i) => (i === idx ? { ...e, [field]: value === "" ? null : Number(value) } : e));
     setLocal(copy);
@@ -4775,6 +4825,7 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
       serie: maxSerie + 1,
       reps: template ? template.reps : null,
       charge: template ? template.charge : null,
+      pdc: template ? template.pdc : undefined,
       validee: false,
     };
     const updated = [...local, newEntry];
@@ -4784,6 +4835,83 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
 
   const removeSerie = (groupKey, serie) => {
     const updated = local.filter((e) => !(groupKeyOf(e) === groupKey && e.serie === serie));
+    setLocal(updated);
+    onSave({ entries: updated, bilan, bilanAvant, niveaux: niveauxParExercice });
+  };
+
+  const isUnilateralEx = (id) => {
+    const nv = getExerciseNiveaux(exercisesAliased[id], null)[(niveauxParExercice[id] || 1) - 1];
+    return !!nv && /unilat/i.test(nv.nom || "");
+  };
+
+  // Dans un circuit, chaque exercice a pour temps d'effort celui du
+  // circuit (en secondes, pas de répétitions). À l'ouverture, on n'ajuste
+  // que les séries encore à une valeur par défaut (12 rép. / 60 s) (pour ne pas écraser une saisie manuelle) ; quand
+  // le coach change le temps d'effort du circuit, on aligne tout. Les séries
+  // déjà validées ne sont jamais modifiées.
+  const syncCircuitWork = (groupKeys, workSeconds, forceAll) => {
+    const w = Number(workSeconds);
+    if (!Number.isFinite(w) || w < 1) return;
+    const keys = new Set(groupKeys.filter((gk) => {
+      const x = exercisesAliased[gk];
+      return !isCardioExercise(x) && !isMobilityExercise(x) && !isEndSessionExercise(x);
+    }));
+    if (!keys.size) return;
+    let changed = false;
+    const updated = localRef.current.map((e) => {
+      if (!keys.has(groupKeyOf(e)) || e.validee || e.reps === w) return e;
+      if (!forceAll && e.reps != null && e.reps !== GAINAGE_DEFAULT_SECONDS && e.reps !== DEFAULT_REPS) return e;
+      changed = true;
+      return { ...e, reps: w };
+    });
+    if (!changed) return;
+    localRef.current = updated;
+    setLocal(updated);
+    onSave({ entries: updated, bilan, bilanAvant, niveaux: niveauxParExercice });
+  };
+
+  // Dans un circuit, le nombre de séries de chaque exercice = le nombre de
+  // tours. On ajoute les séries manquantes ; on ne retire les séries en trop
+  // (de la dernière à la première) que si le coach vient de changer le
+  // nombre de tours (allowRemove) et qu'elles ne sont pas déjà validées.
+  const localRef = useRef(local);
+  localRef.current = local;
+  const syncCircuitSeries = (groupKeys, rounds, allowRemove) => {
+    const n = Number(rounds);
+    if (!Number.isFinite(n) || n < 1) return;
+    let updated = localRef.current;
+    let changed = false;
+    groupKeys.forEach((gk) => {
+      let rowsForEx = updated.filter((e) => groupKeyOf(e) === gk);
+      if (!rowsForEx.length) return;
+      while (rowsForEx.length < n) {
+        const maxSerie = Math.max(...rowsForEx.map((e) => e.serie));
+        const template = rowsForEx[rowsForEx.length - 1];
+        const newEntry = {
+          exerciceId: template.exerciceId,
+          instance: template.instance,
+          serie: maxSerie + 1,
+          reps: template.reps,
+          charge: template.charge,
+          pdc: template.pdc,
+          validee: false,
+        };
+        updated = [...updated, newEntry];
+        rowsForEx = [...rowsForEx, newEntry];
+        changed = true;
+      }
+      if (allowRemove) {
+        while (rowsForEx.length > n) {
+          const last = rowsForEx.reduce((m, e) => (e.serie > m.serie ? e : m), rowsForEx[0]);
+          if (last.validee) break;
+          updated = updated.filter((e) => e !== last);
+          rowsForEx = rowsForEx.filter((e) => e !== last);
+          changed = true;
+        }
+      }
+    });
+    if (!changed) return;
+    localRef.current = updated;
     setLocal(updated);
     onSave({ entries: updated, bilan, bilanAvant, niveaux: niveauxParExercice });
   };
@@ -4885,6 +5013,9 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                   defaultWork={circuitMeta.workSeconds ?? WARMUP_WORK_SECONDS}
                   defaultRest={circuitMeta.restSeconds ?? WARMUP_REST_SECONDS}
                   defaultRoundRest={circuitMeta.roundRestSeconds ?? WARMUP_ROUND_REST_SECONDS}
+                  onRoundsChange={(r, allowRemove) => syncCircuitSeries(ids, r, allowRemove)}
+                  onWorkSecondsChange={(w, forceAll) => syncCircuitWork(ids, w, forceAll)}
+                  exerciseSides={ids.map((id) => isUnilateralEx(id))}
                   exerciseNames={ids.map((id) => (exercisesAliased[id] ? exercisesAliased[id].nom.replace(/\n/g, " ") : "Exercice"))}
                   headerExtra={
                     <label style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer", fontSize: 11, color: COLORS.textDim, whiteSpace: "nowrap" }}>
@@ -4914,6 +5045,7 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                     defaultRest={(seanceType && seanceType.warmupRestSeconds != null) ? seanceType.warmupRestSeconds : WARMUP_REST_SECONDS}
                     defaultRoundRest={(seanceType && seanceType.warmupRoundRestSeconds != null) ? seanceType.warmupRoundRestSeconds : WARMUP_ROUND_REST_SECONDS}
                     exerciseNames={ids.map((id) => (exercisesAliased[id] ? exercisesAliased[id].nom.replace(/\n/g, " ") : "Exercice"))}
+                    onRoundsChange={(r, allowRemove) => syncCircuitSeries(ids, r, allowRemove)}
                     onSettingsChange={seanceType ? (s) => onUpdateWarmupSettings(seanceType.id, {
                       warmupRounds: s.rounds,
                       warmupWorkSeconds: s.workSeconds,
@@ -4960,6 +5092,8 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                 const mobility = isMobilityExercise(ex);
                 const cardio = isCardioExercise(ex);
                 const gainage = isGainageExercise(ex);
+                // Dans un circuit "corps de séance", on saisit un temps (sec) et non des répétitions.
+                const circuitTime = isCorpsCircuit && !cardio && !mobility && !endSession;
                 const prevCardio = cardio ? previousCardioValues[exId] : null;
                 // Dans un circuit, les temps de repos sont gérés par le chrono du circuit : pas de chronos "Set 1/2/3" par exercice.
                 const showTimerBtn = !hasCircuitTimer && ex && getExerciseZones(ex).some((z) => zoneLabel(z) === "BAS DU CORPS" || zoneLabel(z) === "HAUT DU CORPS");
@@ -4981,6 +5115,7 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                       )}
                       {warmup && <span style={{ color: COLORS.textFaint, fontWeight: 400, fontSize: 11 }}> — temps en secondes</span>}
                       {gainage && <span style={{ color: COLORS.textFaint, fontWeight: 400, fontSize: 11 }}> — temps d'effort en secondes</span>}
+                      {circuitTime && !warmup && !gainage && <span style={{ color: COLORS.textFaint, fontWeight: 400, fontSize: 11 }}> — temps d'effort en secondes</span>}
                       {mySupersetId && (
                         <span
                           style={{
@@ -5596,6 +5731,9 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                       <React.Fragment key={row._idx}>
                       <div style={row.validee ? { ...styles.entryRow, ...styles.entryRowValidated } : styles.entryRow}>
                         <span style={styles.entryLabel}>Set {row.serie}</span>
+                        {circuitTime && isUnilateralEx(exId) && (
+                          <span style={{ fontSize: 10, fontWeight: 700, color: COLORS.accent2, whiteSpace: "nowrap" }}>{circuitSideLabel(rIdx, rows.length)}</span>
+                        )}
                         <button
                           type="button"
                           onClick={() => removeSerie(exId, row.serie)}
@@ -5621,21 +5759,47 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                           value={row.reps ?? ""}
                           onFocus={(e) => e.target.select()}
                           onChange={(e) => updateField(row._idx, "reps", e.target.value)}
-                          placeholder={warmup ? "Sec." : endSession ? "Resp." : gainage ? "Sec." : "Rép."}
+                          placeholder={warmup || circuitTime ? "Sec." : endSession ? "Resp." : gainage ? "Sec." : "Rép."}
                           style={styles.numInput}
                         />
-                        <span style={styles.unitLabel}>{warmup ? "sec" : endSession ? "resp" : gainage ? "sec" : "rep"}</span>
+                        <span style={styles.unitLabel}>{warmup || circuitTime ? "sec" : endSession ? "resp" : gainage ? "sec" : "rep"}</span>
                         {!endSession && !gainage && (
                           <>
-                            <input
-                              type="number"
-                              value={row.charge ?? ""}
-                              onFocus={(e) => e.target.select()}
-                              onChange={(e) => updateField(row._idx, "charge", e.target.value)}
-                              placeholder="Kg"
-                              style={styles.numInput}
-                            />
-                            <span style={styles.unitLabel}>kg</span>
+                            {isPdc(row, ex) ? (
+                              <span style={{ ...styles.unitLabel, color: COLORS.accent2, fontWeight: 600, whiteSpace: "nowrap" }}>Poids du corps</span>
+                            ) : (
+                              <>
+                                <input
+                                  type="number"
+                                  value={row.charge ?? ""}
+                                  onFocus={(e) => e.target.select()}
+                                  onChange={(e) => updateField(row._idx, "charge", e.target.value)}
+                                  placeholder="Kg"
+                                  style={styles.numInput}
+                                />
+                                <span style={styles.unitLabel}>kg</span>
+                              </>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => togglePdc(row._idx, ex)}
+                              title={isPdc(row, ex) ? "Passer en kg" : "Passer en poids du corps"}
+                              aria-label={isPdc(row, ex) ? "Passer en kg" : "Passer en poids du corps"}
+                              style={{
+                                height: 22,
+                                padding: "0 6px",
+                                borderRadius: 5,
+                                border: `1px solid ${isPdc(row, ex) ? COLORS.accent : COLORS.cardBorder}`,
+                                background: isPdc(row, ex) ? COLORS.accent : COLORS.bg2,
+                                color: isPdc(row, ex) ? COLORS.bg : COLORS.textFaint,
+                                fontSize: 10,
+                                fontWeight: 700,
+                                cursor: "pointer",
+                                flexShrink: 0,
+                              }}
+                            >
+                              PdC
+                            </button>
                           </>
                         )}
                         <button
@@ -5650,8 +5814,8 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                         {prev && (
                           <span style={styles.prevValue}>
                             Dernière fois : {prev.reps ?? "—"}
-                            {warmup ? "s" : endSession ? " resp." : gainage ? "s" : " rép."}
-                            {!endSession && !gainage && <> · {prev.charge ?? "—"} kg</>}
+                            {warmup || circuitTime ? "s" : endSession ? " resp." : gainage ? "s" : " rép."}
+                            {!endSession && !gainage && (isPdc(prev, ex) ? <> · poids du corps</> : <> · {prev.charge ?? "—"} kg</>)}
                             {!endSession && !gainage && (prev.paliers || []).map((p, pi) => (
                               <React.Fragment key={pi}> → {p.reps ?? "—"}×{p.charge ?? "—"}kg</React.Fragment>
                             ))}
@@ -10887,6 +11051,7 @@ function NewExerciseForm({ data, onCancel, onSave }) {
   const [consignes, setConsignes] = useState({});
   const [videoUrl, setVideoUrl] = useState("");
   const [maison, setMaison] = useState(false);
+  const [poidsDuCorps, setPoidsDuCorps] = useState(false);
   const [tempsRepos, setTempsRepos] = useState([]);
   const [niveaux, setNiveaux] = useState([
     { nom: "Bilatéral", consignes: {}, videoUrl: "" },
@@ -10948,6 +11113,11 @@ function NewExerciseForm({ data, onCancel, onSave }) {
         <span style={{ marginLeft: 8 }}>Faisable à la maison (sans machine de musculation)</span>
       </label>
 
+      <label style={{ ...styles.checkItem, marginTop: 8, cursor: "pointer" }}>
+        <input type="checkbox" checked={poidsDuCorps} onChange={(e) => setPoidsDuCorps(e.target.checked)} />
+        <span style={{ marginLeft: 8 }}>« Poids du corps » par défaut (au lieu des kg)</span>
+      </label>
+
       <label style={styles.fieldLabel}>Temps de repos par série (optionnel)</label>
       <RestTimesFields tempsRepos={tempsRepos} onChange={setTempsRepos} />
 
@@ -10983,6 +11153,7 @@ function NewExerciseForm({ data, onCancel, onSave }) {
               consignes,
               videoUrl: videoUrl.trim(),
               maison,
+              poidsDuCorps,
               tempsRepos,
             })
           }
@@ -10999,6 +11170,7 @@ function EditExerciseForm({ data, exercise, onCancel, onSave }) {
   const [consignes, setConsignes] = useState(exercise.consignes || {});
   const [videoUrl, setVideoUrl] = useState(exercise.videoUrl || "");
   const [maison, setMaison] = useState(!!exercise.maison);
+  const [poidsDuCorps, setPoidsDuCorps] = useState(!!exercise.poidsDuCorps);
   const [tempsRepos, setTempsRepos] = useState(Array.isArray(exercise.tempsRepos) ? exercise.tempsRepos : []);
   const [niveaux, setNiveaux] = useState(
     Array.isArray(exercise.niveaux) && exercise.niveaux.length
@@ -11065,6 +11237,11 @@ function EditExerciseForm({ data, exercise, onCancel, onSave }) {
         <span style={{ marginLeft: 8 }}>Faisable à la maison (sans machine de musculation)</span>
       </label>
 
+      <label style={{ ...styles.checkItem, marginTop: 8, cursor: "pointer" }}>
+        <input type="checkbox" checked={poidsDuCorps} onChange={(e) => setPoidsDuCorps(e.target.checked)} />
+        <span style={{ marginLeft: 8 }}>« Poids du corps » par défaut (au lieu des kg)</span>
+      </label>
+
       <label style={styles.fieldLabel}>Temps de repos par série (optionnel)</label>
       <RestTimesFields tempsRepos={tempsRepos} onChange={setTempsRepos} />
 
@@ -11100,6 +11277,7 @@ function EditExerciseForm({ data, exercise, onCancel, onSave }) {
               consignes,
               videoUrl: videoUrl.trim(),
               maison,
+              poidsDuCorps,
               tempsRepos,
             })
           }
