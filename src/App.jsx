@@ -5763,7 +5763,7 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                           style={styles.numInput}
                         />
                         <span style={styles.unitLabel}>{warmup || circuitTime ? "sec" : endSession ? "resp" : gainage ? "sec" : "rep"}</span>
-                        {!endSession && !gainage && (
+                        {!endSession && (!gainage || isPdc(row, ex)) && (
                           <>
                             {isPdc(row, ex) ? (
                               <span style={{ ...styles.unitLabel, color: COLORS.accent2, fontWeight: 600, whiteSpace: "nowrap" }}>Poids du corps</span>
@@ -5815,7 +5815,7 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                           <span style={styles.prevValue}>
                             Dernière fois : {prev.reps ?? "—"}
                             {warmup || circuitTime ? "s" : endSession ? " resp." : gainage ? "s" : " rép."}
-                            {!endSession && !gainage && (isPdc(prev, ex) ? <> · poids du corps</> : <> · {prev.charge ?? "—"} kg</>)}
+                            {!endSession && (!gainage || isPdc(prev, ex)) && (isPdc(prev, ex) ? <> · poids du corps</> : <> · {prev.charge ?? "—"} kg</>)}
                             {!endSession && !gainage && (prev.paliers || []).map((p, pi) => (
                               <React.Fragment key={pi}> → {p.reps ?? "—"}×{p.charge ?? "—"}kg</React.Fragment>
                             ))}
