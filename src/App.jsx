@@ -4269,6 +4269,16 @@ function CircuitTimer({
       <div style={{ fontSize: 13, fontWeight: 700, color: isRest ? COLORS.accent2 : COLORS.accent, marginBottom: 4 }}>
         {isRoundRest ? "Repos entre tours" : isRest ? "Repos" : currentPhase.label}
       </div>
+      {isRest && (() => {
+        const next = phases.slice(phaseIndex + 1).find((p) => p.type === "work");
+        if (!next) return null;
+        return (
+          <div style={{ fontSize: 13, color: COLORS.textDim, marginBottom: 4 }}>
+            Ensuite : <strong style={{ color: COLORS.accent }}>{next.label}</strong>
+            {isRoundRest && next.round ? <span style={{ color: COLORS.textFaint }}> (tour {next.round})</span> : null}
+          </div>
+        );
+      })()}
       <div style={{ ...styles.circuitTimerDisplay, color: isRest ? COLORS.accent2 : COLORS.text }}>
         {formatTimer(secondsLeft)}
       </div>
