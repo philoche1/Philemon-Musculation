@@ -1345,7 +1345,7 @@ bookings={bookings}
                 persistLibrary={persistLibrary}
               />
             )}
-            {view === "progression" && <ProgressionView data={data} />}
+            {view === "progression" && <ProgressionView data={data} clientId={clientId} role={roleEffectif} activeClient={activeClient} />}
             {view === "ct" && <CTView data={data} activeClient={activeClient} clientId={clientId} role={roleEffectif} persistLibrary={persistLibrary} />}
             {view === "alimentation" && <AlimentationView clientId={clientId} role={roleEffectif} data={data} persistLibrary={persistLibrary} activeClient={activeClient} assignMealPlan={assignMealPlan} assignDetailedMealPlan={assignDetailedMealPlan} updateFoodExclusions={updateFoodExclusions} />}
             {view === "documents" && <DocumentsView clientId={clientId} role={roleEffectif} activeClient={activeClient} />}
@@ -8966,7 +8966,337 @@ function AlimentationView({ clientId, role, data, persistLibrary, activeClient, 
   );
 }
 
-function ProgressionView({ data }) {
+// ─────────────────────────────────────────────────────────────────────────
+// Bilan de progression en PDF (généré dans le navigateur, sans librairie).
+// Mini-générateur PDF vectoriel : texte Helvetica + courbes dessinées.
+// ─────────────────────────────────────────────────────────────────────────
+const progressionBilansKey = (clientId) => `progression-bilans-v1-${clientId}`;
+
+function pdfSanitize(str) {
+  return String(str == null ? "" : str)
+    .replace(/[\r\n]+/g, " ")
+    .replace(/[’‘]/g, "'")
+    .replace(/[“”]/g, '"')
+    .replace(/[–—]/g, "-")
+    .replace(/…/g, "...")
+    .replace(/→/g, "->")
+    .replace(/œ/g, "oe")
+    .replace(/Œ/g, "OE")
+    .replace(/[^\x20-\x7E\xA0-\xFF]/g, "");
+}
+
+function pdfTextWidth(str, size, bold) {
+  let w = 0;
+  for (const ch of pdfSanitize(str)) {
+    if (/[0-9]/.test(ch)) w += 0.556;
+    else if (/[ /.,:;'!|ijlI()-]/.test(ch)) w += 0.28;
+    else if (/[mwMW]/.test(ch)) w += 0.8;
+    else if (/[A-Z]/.test(ch)) w += 0.67;
+    else w += bold ? 0.56 : 0.52;
+  }
+  return w * size;
+}
+
+function pdfColor(hex) {
+  const h = hex.replace("#", "");
+  const r = parseInt(h.slice(0, 2), 16) / 255;
+  const g = parseInt(h.slice(2, 4), 16) / 255;
+  const b = parseInt(h.slice(4, 6), 16) / 255;
+  return `${r.toFixed(3)} ${g.toFixed(3)} ${b.toFixed(3)}`;
+}
+
+function createPdfBuilder() {
+  const W = 595.28;
+  const H = 841.89;
+  const pages = [];
+  let ops = null;
+  const n = (v) => (Math.round(v * 100) / 100).toString();
+  const Y = (y) => H - y; // coordonnées "haut → bas" comme à l'écran
+  const api = {
+    W,
+    H,
+    newPage() {
+      ops = [];
+      pages.push(ops);
+    },
+    pageCount: () => pages.length,
+    setPage(i) {
+      ops = pages[i];
+    },
+    text(x, y, str, { size = 10, bold = false, color = "#222222", align = "left" } = {}) {
+      const s = pdfSanitize(str).replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
+      const w = pdfTextWidth(str, size, bold);
+      const px = align === "right" ? x - w : align === "center" ? x - w / 2 : x;
+      ops.push(`BT /${bold ? "F2" : "F1"} ${n(size)} Tf ${pdfColor(color)} rg ${n(px)} ${n(Y(y))} Td (${s}) Tj ET`);
+    },
+    line(x1, y1, x2, y2, { color = "#cccccc", width = 0.6, dash = null } = {}) {
+      ops.push(`q ${pdfColor(color)} RG ${n(width)} w ${dash ? `[${dash} ${dash}] 0 d` : ""} ${n(x1)} ${n(Y(y1))} m ${n(x2)} ${n(Y(y2))} l S Q`);
+    },
+    polyline(points, { color = "#000000", width = 1.4 } = {}) {
+      if (points.length < 2) return;
+      const path = points.map((p, i) => `${n(p[0])} ${n(Y(p[1]))} ${i === 0 ? "m" : "l"}`).join(" ");
+      ops.push(`q ${pdfColor(color)} RG ${n(width)} w 1 J 1 j ${path} S Q`);
+    },
+    rect(x, y, w, h, { fill = null, stroke = null, width = 0.6 } = {}) {
+      const paint = fill && stroke ? "B" : fill ? "f" : "S";
+      ops.push(`q ${fill ? pdfColor(fill) + " rg" : ""} ${stroke ? pdfColor(stroke) + " RG" : ""} ${n(width)} w ${n(x)} ${n(Y(y + h))} ${n(w)} ${n(h)} re ${paint} Q`);
+    },
+    circle(cx, cy, r, { fill = "#000000" } = {}) {
+      const k = 0.5523 * r;
+      const px = cx;
+      const py = Y(cy);
+      ops.push(
+        `q ${pdfColor(fill)} rg ${n(px + r)} ${n(py)} m ` +
+        `${n(px + r)} ${n(py + k)} ${n(px + k)} ${n(py + r)} ${n(px)} ${n(py + r)} c ` +
+        `${n(px - k)} ${n(py + r)} ${n(px - r)} ${n(py + k)} ${n(px - r)} ${n(py)} c ` +
+        `${n(px - r)} ${n(py - k)} ${n(px - k)} ${n(py - r)} ${n(px)} ${n(py - r)} c ` +
+        `${n(px + k)} ${n(py - r)} ${n(px + r)} ${n(py - k)} ${n(px + r)} ${n(py)} c f Q`
+      );
+    },
+    // Retourne le PDF final sous forme de chaîne binaire (1 caractère = 1 octet).
+    build() {
+      const objs = [];
+      objs[1] = "<< /Type /Catalog /Pages 2 0 R >>";
+      const pageIds = pages.map((_, i) => 5 + i * 2);
+      objs[2] = `<< /Type /Pages /Kids [${pageIds.map((id) => `${id} 0 R`).join(" ")}] /Count ${pages.length} >>`;
+      objs[3] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>";
+      objs[4] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>";
+      pages.forEach((p, i) => {
+        const pid = 5 + i * 2;
+        const cid = pid + 1;
+        const content = p.join("\n");
+        objs[pid] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${W} ${H}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${cid} 0 R >>`;
+        objs[cid] = `<< /Length ${content.length} >>\nstream\n${content}\nendstream`;
+      });
+      let out = "%PDF-1.4\n";
+      const offsets = [];
+      for (let i = 1; i < objs.length; i++) {
+        offsets[i] = out.length;
+        out += `${i} 0 obj\n${objs[i]}\nendobj\n`;
+      }
+      const xref = out.length;
+      out += `xref\n0 ${objs.length}\n0000000000 65535 f \n`;
+      for (let i = 1; i < objs.length; i++) out += `${String(offsets[i]).padStart(10, "0")} 00000 n \n`;
+      out += `trailer\n<< /Size ${objs.length} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
+      return out;
+    },
+  };
+  return api;
+}
+
+// Échelle "propre" avec exactement 4 intervalles.
+function pdfNiceScale(min, max) {
+  if (!isFinite(min) || !isFinite(max)) return { lo: 0, hi: 4, step: 1 };
+  if (min === max) {
+    min = Math.max(0, min - 1);
+    max = max + 1;
+  }
+  const mults = [1, 2, 2.5, 5];
+  for (let k = -2; k <= 7; k++) {
+    for (const m of mults) {
+      const step = m * Math.pow(10, k);
+      const lo = Math.floor(min / step + 1e-9) * step;
+      if (lo + 4 * step >= max - 1e-9) return { lo, hi: lo + 4 * step, step };
+    }
+  }
+  return { lo: min, hi: max, step: (max - min) / 4 };
+}
+
+function pdfFmtNum(v) {
+  return String(Math.round(v * 100) / 100).replace(".", ",");
+}
+
+function pdfShortDate(iso) {
+  const [y, m, d] = iso.split("-");
+  return `${d}/${m}/${y.slice(2)}`;
+}
+
+// Dessine un bloc "courbe" : titre, résumé, grille, axes, courbes.
+// series : [{ name, color, values[], axis: "left"|"right", fmt(v) }]
+function pdfDrawChartBlock(pdf, { x, y, w, h, title, labels, series }) {
+  pdf.rect(x, y, w, h, { stroke: "#dddddd", width: 0.8 });
+  pdf.text(x + 10, y + 16, title, { size: 11, bold: true, color: "#111111" });
+  // Résumé : première → dernière valeur
+  const summary = series
+    .map((s) => {
+      const vals = s.values.filter((v) => v != null);
+      if (!vals.length) return null;
+      const first = vals[0];
+      const last = vals[vals.length - 1];
+      let t = `${s.name} : ${s.fmt(first)}`;
+      if (vals.length > 1) {
+        t += ` -> ${s.fmt(last)}`;
+        if (first > 0) {
+          const pct = Math.round(((last - first) / first) * 100);
+          t += ` (${pct > 0 ? "+" : ""}${pct} %)`;
+        }
+      }
+      return t;
+    })
+    .filter(Boolean)
+    .join("   |   ");
+  pdf.text(x + 10, y + 29, summary, { size: 8, color: "#666666" });
+
+  const hasRight = series.some((s) => s.axis === "right");
+  const pl = x + 40;
+  const pr = x + w - (hasRight ? 40 : 26);
+  const pt = y + 42;
+  const pb = y + h - 22;
+  const plotW = pr - pl;
+  const plotH = pb - pt;
+  const scales = {};
+  ["left", "right"].forEach((ax) => {
+    const vals = series.filter((s) => s.axis === ax).flatMap((s) => s.values.filter((v) => v != null));
+    if (vals.length) scales[ax] = pdfNiceScale(Math.min(...vals), Math.max(...vals));
+  });
+  // grille + graduations
+  for (let i = 0; i <= 4; i++) {
+    const gy = pb - (plotH * i) / 4;
+    pdf.line(pl, gy, pr, gy, { color: i === 0 ? "#999999" : "#e6e6e6", width: i === 0 ? 0.8 : 0.5 });
+    ["left", "right"].forEach((ax) => {
+      const sc = scales[ax];
+      if (!sc) return;
+      const ser = series.find((s) => s.axis === ax);
+      const v = sc.lo + sc.step * i;
+      const txt = ser.fmt(v);
+      if (ax === "left") pdf.text(pl - 5, gy + 3, txt, { size: 7.5, color: ser.color, align: "right" });
+      else pdf.text(pr + 5, gy + 3, txt, { size: 7.5, color: ser.color });
+    });
+  }
+  const nPts = labels.length;
+  const xAt = (i) => (nPts === 1 ? pl + plotW / 2 : pl + (plotW * i) / (nPts - 1));
+  // labels de dates
+  const maxLabels = Math.max(2, Math.floor(plotW / 46));
+  const stepLbl = Math.ceil(nPts / maxLabels);
+  labels.forEach((lb, i) => {
+    if (i % stepLbl !== 0) return;
+    pdf.text(xAt(i), pb + 12, pdfShortDate(lb), { size: 7.5, color: "#666666", align: "center" });
+  });
+  // courbes
+  series.forEach((s) => {
+    const sc = scales[s.axis];
+    if (!sc) return;
+    const pts = [];
+    s.values.forEach((v, i) => {
+      if (v == null) return;
+      pts.push([xAt(i), pb - ((v - sc.lo) / (sc.hi - sc.lo)) * plotH]);
+    });
+    pdf.polyline(pts, { color: s.color, width: 1.6 });
+    pts.forEach((p) => pdf.circle(p[0], p[1], 2.4, { fill: s.color }));
+  });
+  // légende (si plusieurs courbes)
+  if (series.length > 1) {
+    let lx = x + w - 10;
+    [...series].reverse().forEach((s) => {
+      const tw = pdfTextWidth(s.name, 8, false);
+      pdf.text(lx, y + 16, s.name, { size: 8, color: "#444444", align: "right" });
+      pdf.circle(lx - tw - 8, y + 13.5, 3, { fill: s.color });
+      lx -= tw + 22;
+    });
+  }
+}
+
+// Points d'un exercice (meilleure série de chaque séance), dates en ISO.
+function progressionPointsFor(sessions, exId) {
+  const rows = [];
+  [...sessions]
+    .sort((a, b) => (a.date > b.date ? 1 : -1))
+    .forEach((s) => {
+      const entries = (s.entries || []).filter(
+        (e) => e.exerciceId === exId && (e.reps != null || e.charge != null || e.distanceKm != null || e.deniveleDPlus != null)
+      );
+      if (entries.length === 0) return;
+      const best = (k) => Math.max(...entries.map((e) => e[k] ?? 0)) || null;
+      rows.push({
+        date: s.date,
+        reps: best("reps"),
+        charge: best("charge"),
+        distanceKm: best("distanceKm"),
+        deniveleDPlus: best("deniveleDPlus"),
+      });
+    });
+  return rows;
+}
+
+// Construit le PDF complet. Retourne { binary, count } ou null s'il n'y a aucune donnée.
+function buildProgressionPdf({ clientName, exercises, sessions, zones }) {
+  // exercices avec données, dans l'ordre des zones de l'onglet Progression
+  const seen = new Set();
+  const list = [];
+  zones.forEach((z) => {
+    exercises
+      .filter((e) => getExerciseZones(e).some((zz) => zoneLabel(zz) === z))
+      .forEach((e) => {
+        if (seen.has(e.id)) return;
+        seen.add(e.id);
+        const pts = progressionPointsFor(sessions, e.id);
+        if (pts.length) list.push({ ex: e, pts });
+      });
+  });
+  if (!list.length) return null;
+
+  const COL_A = "#E8590C";
+  const COL_B = "#2F6FDE";
+  const blocks = [];
+  list.forEach(({ ex, pts }) => {
+    const name = exDisplayName(ex);
+    const labels = pts.map((p) => p.date);
+    if (isCardioExercise(ex)) {
+      const defs = [
+        { key: "reps", label: "Durée", color: COL_A, fmt: (v) => formatTimer(Math.round(v)) },
+        { key: "distanceKm", label: "Distance", color: COL_B, fmt: (v) => `${pdfFmtNum(v)} km` },
+        { key: "deniveleDPlus", label: "Dénivelé D+", color: COL_A, fmt: (v) => `${pdfFmtNum(v)} m` },
+      ];
+      defs.forEach((d) => {
+        if (!pts.some((p) => p[d.key] != null)) return;
+        blocks.push({ title: `${name} - ${d.label}`, labels, series: [{ name: d.label, color: d.color, axis: "left", values: pts.map((p) => p[d.key]), fmt: d.fmt }] });
+      });
+    } else {
+      const seconds = isWarmupExercise(ex) || isGainageExercise(ex);
+      const repsLabel = seconds ? "Temps (s)" : isEndSessionExercise(ex) ? "Respirations" : "Répétitions";
+      const series = [];
+      if (pts.some((p) => p.reps != null)) series.push({ name: repsLabel, color: COL_A, axis: "left", values: pts.map((p) => p.reps), fmt: pdfFmtNum });
+      if (pts.some((p) => p.charge != null)) series.push({ name: "Charge (kg)", color: COL_B, axis: series.length ? "right" : "left", values: pts.map((p) => p.charge), fmt: pdfFmtNum });
+      if (series.length) blocks.push({ title: name, labels, series });
+    }
+  });
+  if (!blocks.length) return null;
+
+  const pdf = createPdfBuilder();
+  const today = new Date();
+  const todayFr = today.toLocaleDateString("fr-FR");
+  const allDates = list.flatMap((l) => l.pts.map((p) => p.date)).sort();
+  const M = 40;
+  const BH = 168;
+  const GAP = 10;
+  pdf.newPage();
+  pdf.rect(0, 0, pdf.W, 6, { fill: COL_A });
+  pdf.text(M, 44, "Bilan de progression", { size: 22, bold: true, color: "#111111" });
+  pdf.text(M, 66, clientName || "", { size: 14, bold: true, color: COL_A });
+  pdf.text(M, 82, `Édité le ${todayFr}  ·  Séances du ${pdfShortDate(allDates[0])} au ${pdfShortDate(allDates[allDates.length - 1])}  ·  ${list.length} exercice${list.length > 1 ? "s" : ""} avec données`, { size: 9, color: "#666666" });
+  let cy = 98;
+  blocks.forEach((b) => {
+    if (cy + BH > pdf.H - 42) {
+      pdf.newPage();
+      cy = M;
+    }
+    pdfDrawChartBlock(pdf, { x: M, y: cy, w: pdf.W - 2 * M, h: BH, title: b.title, labels: b.labels, series: b.series });
+    cy += BH + GAP;
+  });
+  const total = pdf.pageCount();
+  for (let i = 0; i < total; i++) {
+    pdf.setPage(i);
+    pdf.text(M, pdf.H - 22, `Philémon Musculation - Bilan de progression${clientName ? " - " + clientName : ""}`, { size: 8, color: "#999999" });
+    pdf.text(pdf.W - M, pdf.H - 22, `Page ${i + 1} / ${total}`, { size: 8, color: "#999999", align: "right" });
+  }
+  return { binary: pdf.build(), count: list.length };
+}
+
+function pdfBinaryToDataUrl(binary) {
+  return "data:application/pdf;base64," + btoa(binary);
+}
+
+function ProgressionView({ data, clientId, role, activeClient }) {
   const zones = useMemo(() => {
     const seen = [];
     data.exercises.forEach((e) => {
@@ -9026,9 +9356,158 @@ function ProgressionView({ data }) {
   const ex = data.exercises.find((e) => e.id === exId);
   const isCardio = isCardioExercise(ex);
 
+  // ── Bilans PDF (stockés par client, datés) ──
+  const isCoach = role === "coach";
+  const [bilans, setBilans] = useState([]);
+  const [bilansLoaded, setBilansLoaded] = useState(false);
+  const [bilanBusy, setBilanBusy] = useState(false);
+  const [bilanMsg, setBilanMsg] = useState("");
+
+  useEffect(() => {
+    if (!clientId) return;
+    let cancelled = false;
+    setBilansLoaded(false);
+    setBilanMsg("");
+    (async () => {
+      let list = [];
+      try {
+        const r = await window.storage.get(progressionBilansKey(clientId), true);
+        if (r && r.value) list = JSON.parse(r.value);
+      } catch (e) {}
+      if (!cancelled) {
+        setBilans(Array.isArray(list) ? list : []);
+        setBilansLoaded(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [clientId]);
+
+  const persistBilans = async (list) => {
+    setBilans(list);
+    try {
+      await window.storage.set(progressionBilansKey(clientId), JSON.stringify(list), true);
+      return true;
+    } catch (e) {
+      setBilanMsg("Erreur d'enregistrement, réessaie.");
+      return false;
+    }
+  };
+
+  const createBilanPdf = async () => {
+    if (bilanBusy || !clientId) return;
+    setBilanMsg("");
+    setBilanBusy(true);
+    try {
+      const result = buildProgressionPdf({
+        clientName: activeClient ? activeClient.name : "",
+        exercises: data.exercises,
+        sessions: data.sessions,
+        zones,
+      });
+      if (!result) {
+        setBilanMsg("Aucune donnée à exporter pour l'instant.");
+      } else {
+        const now = new Date();
+        const iso = now.toISOString();
+        const dayFr = now.toLocaleDateString("fr-FR").replace(/\//g, "-");
+        const safeName = ((activeClient && activeClient.name) || "client").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+        const entry = {
+          id: "bil" + Math.random().toString(36).slice(2, 9),
+          name: `Bilan progression - ${safeName} - ${dayFr}.pdf`,
+          createdAt: iso,
+          exerciseCount: result.count,
+          dataUrl: pdfBinaryToDataUrl(result.binary),
+          size: result.binary.length,
+        };
+        const ok = await persistBilans([entry, ...bilans]);
+        if (ok) setBilanMsg(`Bilan créé (${result.count} exercice${result.count > 1 ? "s" : ""}).`);
+      }
+    } catch (e) {
+      setBilanMsg("Impossible de créer le PDF.");
+    }
+    setBilanBusy(false);
+  };
+
+  const deleteBilan = async (id) => {
+    if (!window.confirm("Supprimer définitivement ce bilan ?")) return;
+    await persistBilans(bilans.filter((b) => b.id !== id));
+  };
+
+  const previewBilan = async (b) => {
+    const newTab = window.open("", "_blank");
+    try {
+      const res = await fetch(b.dataUrl);
+      const buf = await res.arrayBuffer();
+      const blobUrl = URL.createObjectURL(new Blob([buf], { type: "application/pdf" }));
+      if (newTab) newTab.location.href = blobUrl;
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+    } catch (e) {
+      if (newTab) newTab.location.href = b.dataUrl;
+    }
+  };
+
   return (
     <div>
       <h2 style={styles.h2}>Progression par exercice</h2>
+      {isCoach && (
+        <div style={{ ...styles.card, marginBottom: 16, borderColor: COLORS.accent }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 600, color: COLORS.text }}>Bilans de progression (PDF)</div>
+              <div style={{ fontSize: 12, color: COLORS.textDim, marginTop: 2 }}>
+                Toutes les courbes des exercices qui ont des données{activeClient ? ` — ${activeClient.name}` : ""}.
+              </div>
+            </div>
+            <button style={{ ...styles.primaryBtn, opacity: bilanBusy ? 0.6 : 1 }} onClick={createBilanPdf} disabled={bilanBusy}>
+              {bilanBusy ? "Création…" : "📄 Créer le bilan PDF"}
+            </button>
+          </div>
+          {bilanMsg && <div style={{ fontSize: 12, color: COLORS.textDim, marginTop: 8 }}>{bilanMsg}</div>}
+          {!bilansLoaded ? (
+            <div style={{ fontSize: 12, color: COLORS.textFaint, marginTop: 10 }}>Chargement…</div>
+          ) : bilans.length === 0 ? (
+            <div style={{ fontSize: 12, color: COLORS.textFaint, marginTop: 10 }}>Aucun bilan enregistré pour l'instant.</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 12 }}>
+              {bilans.map((b) => {
+                const d = new Date(b.createdAt);
+                return (
+                  <div key={b.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "8px 10px", border: `1px solid ${COLORS.cardBorder}`, borderRadius: 8 }}>
+                    <button
+                      type="button"
+                      onClick={() => previewBilan(b)}
+                      title="Ouvrir le bilan"
+                      style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 0, background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer" }}
+                    >
+                      <span style={{ fontSize: 20, flexShrink: 0 }}>📄</span>
+                      <span style={{ minWidth: 0 }}>
+                        <span style={{ display: "block", fontSize: 13, color: COLORS.text, fontWeight: 600 }}>
+                          Bilan du {d.toLocaleDateString("fr-FR")}
+                        </span>
+                        <span style={{ display: "block", fontSize: 11, color: COLORS.textFaint }}>
+                          {d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })} · {b.exerciseCount} exercice{b.exerciseCount > 1 ? "s" : ""} · {formatFileSize(b.size || 0)}
+                        </span>
+                      </span>
+                    </button>
+                    <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+                      <a
+                        href={b.dataUrl}
+                        download={b.name}
+                        style={{ ...styles.secondaryBtn, padding: "4px 8px", textDecoration: "none", display: "inline-flex", alignItems: "center" }}
+                        title="Télécharger"
+                        aria-label="Télécharger"
+                      >
+                        ⬇
+                      </a>
+                      <button style={styles.trashBtn} onClick={() => deleteBilan(b.id)} title="Supprimer le bilan" aria-label="Supprimer le bilan">🗑️</button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
         <div style={{ flex: "1 1 200px", minWidth: 180 }}>
           <label style={styles.fieldLabel}>Partie du corps</label>
