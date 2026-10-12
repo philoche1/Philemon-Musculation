@@ -9433,22 +9433,37 @@ function ProgressionView({ data, clientId, role, activeClient }) {
     await persistBilans(bilans.filter((b) => b.id !== id));
   };
 
+  const [bilanViewer, setBilanViewer] = useState(null);
   const previewBilan = async (b) => {
-    const newTab = window.open("", "_blank");
     try {
       const res = await fetch(b.dataUrl);
       const buf = await res.arrayBuffer();
       const blobUrl = URL.createObjectURL(new Blob([buf], { type: "application/pdf" }));
-      if (newTab) newTab.location.href = blobUrl;
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+      setBilanViewer({ url: blobUrl, name: b.name, dataUrl: b.dataUrl });
     } catch (e) {
-      if (newTab) newTab.location.href = b.dataUrl;
+      setBilanMsg("Impossible d'ouvrir ce bilan.");
     }
+  };
+  const closeBilanViewer = () => {
+    if (bilanViewer) URL.revokeObjectURL(bilanViewer.url);
+    setBilanViewer(null);
   };
 
   return (
     <div>
       <h2 style={styles.h2}>Progression par exercice</h2>
+      {bilanViewer && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 3000, background: COLORS.bg, display: "flex", flexDirection: "column" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "10px 14px", borderBottom: `1px solid ${COLORS.cardBorder}` }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: COLORS.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{bilanViewer.name}</div>
+            <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+              <a href={bilanViewer.dataUrl} download={bilanViewer.name} style={{ ...styles.secondaryBtn, textDecoration: "none", display: "inline-flex", alignItems: "center" }}>⬇ Télécharger</a>
+              <button style={styles.primaryBtn} onClick={closeBilanViewer}>✕ Fermer</button>
+            </div>
+          </div>
+          <iframe title="Bilan de progression" src={bilanViewer.url} style={{ flex: 1, width: "100%", border: "none", background: "#fff" }} />
+        </div>
+      )}
       {isCoach && (
         <div style={{ ...styles.card, marginBottom: 16, borderColor: COLORS.accent }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
