@@ -9005,13 +9005,138 @@ function pdfColor(hex) {
   return `${r.toFixed(3)} ${g.toFixed(3)} ${b.toFixed(3)}`;
 }
 
+// Chaque opération de dessin est stockée sous forme d'objet : elle sert à la
+// fois à fabriquer le PDF et à afficher le bilan dans l'application (canvas).
+function pdfOpToString(o, H) {
+  const n = (v) => (Math.round(v * 100) / 100).toString();
+  const Y = (y) => H - y;
+  if (o.k === "t") {
+    const s = pdfSanitize(o.s).replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
+    const w = pdfTextWidth(o.s, o.size, o.bold);
+    const px = o.align === "right" ? o.x - w : o.align === "center" ? o.x - w / 2 : o.x;
+    return `BT /${o.bold ? "F2" : "F1"} ${n(o.size)} Tf ${pdfColor(o.color)} rg ${n(px)} ${n(Y(o.y))} Td (${s}) Tj ET`;
+  }
+  if (o.k === "l") {
+    return `q ${pdfColor(o.color)} RG ${n(o.width)} w ${o.dash ? `[${o.dash} ${o.dash}] 0 d` : ""} ${n(o.x1)} ${n(Y(o.y1))} m ${n(o.x2)} ${n(Y(o.y2))} l S Q`;
+  }
+  if (o.k === "p") {
+    const path = o.pts.map((p, i) => `${n(p[0])} ${n(Y(p[1]))} ${i === 0 ? "m" : "l"}`).join(" ");
+    return `q ${pdfColor(o.color)} RG ${n(o.width)} w 1 J 1 j ${path} S Q`;
+  }
+  if (o.k === "r") {
+    const paint = o.fill && o.stroke ? "B" : o.fill ? "f" : "S";
+    return `q ${o.fill ? pdfColor(o.fill) + " rg" : ""} ${o.stroke ? pdfColor(o.stroke) + " RG" : ""} ${n(o.width)} w ${n(o.x)} ${n(Y(o.y + o.h))} ${n(o.w)} ${n(o.h)} re ${paint} Q`;
+  }
+  // cercle
+  const r = o.r;
+  const k = 0.5523 * r;
+  const px = o.x;
+  const py = Y(o.y);
+  return (
+    `q ${pdfColor(o.fill)} rg ${n(px + r)} ${n(py)} m ` +
+    `${n(px + r)} ${n(py + k)} ${n(px + k)} ${n(py + r)} ${n(px)} ${n(py + r)} c ` +
+    `${n(px - k)} ${n(py + r)} ${n(px - r)} ${n(py + k)} ${n(px - r)} ${n(py)} c ` +
+    `${n(px - r)} ${n(py - k)} ${n(px - k)} ${n(py - r)} ${n(px)} ${n(py - r)} c ` +
+    `${n(px + k)} ${n(py - r)} ${n(px + r)} ${n(py - k)} ${n(px + r)} ${n(py)} c f Q`
+  );
+}
+
+const PDF_PAGE_W = 595.28;
+const PDF_PAGE_H = 841.89;
+
+// Assemble le PDF (chaîne binaire) à partir des pages d'opérations.
+function pdfAssemble(pages) {
+  const W = PDF_PAGE_W;
+  const H = PDF_PAGE_H;
+  const objs = [];
+  objs[1] = "<< /Type /Catalog /Pages 2 0 R >>";
+  const pageIds = pages.map((_, i) => 5 + i * 2);
+  objs[2] = `<< /Type /Pages /Kids [${pageIds.map((id) => `${id} 0 R`).join(" ")}] /Count ${pages.length} >>`;
+  objs[3] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>";
+  objs[4] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>";
+  pages.forEach((p, i) => {
+    const pid = 5 + i * 2;
+    const cid = pid + 1;
+    const content = p.map((o) => pdfOpToString(o, H)).join("\n");
+    objs[pid] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${W} ${H}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${cid} 0 R >>`;
+    objs[cid] = `<< /Length ${content.length} >>\nstream\n${content}\nendstream`;
+  });
+  let out = "%PDF-1.4\n";
+  const offsets = [];
+  for (let i = 1; i < objs.length; i++) {
+    offsets[i] = out.length;
+    out += `${i} 0 obj\n${objs[i]}\nendobj\n`;
+  }
+  const xref = out.length;
+  out += `xref\n0 ${objs.length}\n0000000000 65535 f \n`;
+  for (let i = 1; i < objs.length; i++) out += `${String(offsets[i]).padStart(10, "0")} 00000 n \n`;
+  out += `trailer\n<< /Size ${objs.length} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
+  return out;
+}
+
+// Dessine une page d'opérations sur un canvas 2D (affichage dans l'application).
+function pdfRenderPageToCanvas(ops, canvas, scale) {
+  canvas.width = Math.round(PDF_PAGE_W * scale);
+  canvas.height = Math.round(PDF_PAGE_H * scale);
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.scale(scale, scale);
+  ops.forEach((o) => {
+    if (o.k === "t") {
+      ctx.fillStyle = o.color;
+      ctx.font = `${o.bold ? "bold " : ""}${o.size}px Helvetica, Arial, sans-serif`;
+      ctx.textAlign = o.align === "right" ? "right" : o.align === "center" ? "center" : "left";
+      ctx.fillText(pdfSanitize(o.s), o.x, o.y);
+    } else if (o.k === "l") {
+      ctx.strokeStyle = o.color;
+      ctx.lineWidth = o.width;
+      ctx.setLineDash(o.dash ? [o.dash, o.dash] : []);
+      ctx.beginPath();
+      ctx.moveTo(o.x1, o.y1);
+      ctx.lineTo(o.x2, o.y2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    } else if (o.k === "p") {
+      ctx.strokeStyle = o.color;
+      ctx.lineWidth = o.width;
+      ctx.lineJoin = "round";
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      o.pts.forEach((p, i) => (i === 0 ? ctx.moveTo(p[0], p[1]) : ctx.lineTo(p[0], p[1])));
+      ctx.stroke();
+    } else if (o.k === "r") {
+      if (o.fill) {
+        ctx.fillStyle = o.fill;
+        ctx.fillRect(o.x, o.y, o.w, o.h);
+      }
+      if (o.stroke) {
+        ctx.strokeStyle = o.stroke;
+        ctx.lineWidth = o.width;
+        ctx.strokeRect(o.x, o.y, o.w, o.h);
+      }
+    } else {
+      ctx.fillStyle = o.fill;
+      ctx.beginPath();
+      ctx.arc(o.x, o.y, o.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  });
+}
+
+function pdfRenderPagesToImages(pages, scale = 2) {
+  return pages.map((ops) => {
+    const canvas = document.createElement("canvas");
+    pdfRenderPageToCanvas(ops, canvas, scale);
+    return canvas.toDataURL("image/jpeg", 0.92);
+  });
+}
+
 function createPdfBuilder() {
-  const W = 595.28;
-  const H = 841.89;
+  const W = PDF_PAGE_W;
+  const H = PDF_PAGE_H;
   const pages = [];
   let ops = null;
-  const n = (v) => (Math.round(v * 100) / 100).toString();
-  const Y = (y) => H - y; // coordonnées "haut → bas" comme à l'écran
   const api = {
     W,
     H,
@@ -9023,62 +9148,22 @@ function createPdfBuilder() {
     setPage(i) {
       ops = pages[i];
     },
+    getPages: () => pages,
     text(x, y, str, { size = 10, bold = false, color = "#222222", align = "left" } = {}) {
-      const s = pdfSanitize(str).replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
-      const w = pdfTextWidth(str, size, bold);
-      const px = align === "right" ? x - w : align === "center" ? x - w / 2 : x;
-      ops.push(`BT /${bold ? "F2" : "F1"} ${n(size)} Tf ${pdfColor(color)} rg ${n(px)} ${n(Y(y))} Td (${s}) Tj ET`);
+      ops.push({ k: "t", x, y, s: String(str == null ? "" : str), size, bold, color, align });
     },
     line(x1, y1, x2, y2, { color = "#cccccc", width = 0.6, dash = null } = {}) {
-      ops.push(`q ${pdfColor(color)} RG ${n(width)} w ${dash ? `[${dash} ${dash}] 0 d` : ""} ${n(x1)} ${n(Y(y1))} m ${n(x2)} ${n(Y(y2))} l S Q`);
+      ops.push({ k: "l", x1, y1, x2, y2, color, width, dash });
     },
     polyline(points, { color = "#000000", width = 1.4 } = {}) {
       if (points.length < 2) return;
-      const path = points.map((p, i) => `${n(p[0])} ${n(Y(p[1]))} ${i === 0 ? "m" : "l"}`).join(" ");
-      ops.push(`q ${pdfColor(color)} RG ${n(width)} w 1 J 1 j ${path} S Q`);
+      ops.push({ k: "p", pts: points.map((p) => [Math.round(p[0] * 100) / 100, Math.round(p[1] * 100) / 100]), color, width });
     },
     rect(x, y, w, h, { fill = null, stroke = null, width = 0.6 } = {}) {
-      const paint = fill && stroke ? "B" : fill ? "f" : "S";
-      ops.push(`q ${fill ? pdfColor(fill) + " rg" : ""} ${stroke ? pdfColor(stroke) + " RG" : ""} ${n(width)} w ${n(x)} ${n(Y(y + h))} ${n(w)} ${n(h)} re ${paint} Q`);
+      ops.push({ k: "r", x, y, w, h, fill, stroke, width });
     },
     circle(cx, cy, r, { fill = "#000000" } = {}) {
-      const k = 0.5523 * r;
-      const px = cx;
-      const py = Y(cy);
-      ops.push(
-        `q ${pdfColor(fill)} rg ${n(px + r)} ${n(py)} m ` +
-        `${n(px + r)} ${n(py + k)} ${n(px + k)} ${n(py + r)} ${n(px)} ${n(py + r)} c ` +
-        `${n(px - k)} ${n(py + r)} ${n(px - r)} ${n(py + k)} ${n(px - r)} ${n(py)} c ` +
-        `${n(px - r)} ${n(py - k)} ${n(px - k)} ${n(py - r)} ${n(px)} ${n(py - r)} c ` +
-        `${n(px + k)} ${n(py - r)} ${n(px + r)} ${n(py - k)} ${n(px + r)} ${n(py)} c f Q`
-      );
-    },
-    // Retourne le PDF final sous forme de chaîne binaire (1 caractère = 1 octet).
-    build() {
-      const objs = [];
-      objs[1] = "<< /Type /Catalog /Pages 2 0 R >>";
-      const pageIds = pages.map((_, i) => 5 + i * 2);
-      objs[2] = `<< /Type /Pages /Kids [${pageIds.map((id) => `${id} 0 R`).join(" ")}] /Count ${pages.length} >>`;
-      objs[3] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>";
-      objs[4] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>";
-      pages.forEach((p, i) => {
-        const pid = 5 + i * 2;
-        const cid = pid + 1;
-        const content = p.join("\n");
-        objs[pid] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${W} ${H}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${cid} 0 R >>`;
-        objs[cid] = `<< /Length ${content.length} >>\nstream\n${content}\nendstream`;
-      });
-      let out = "%PDF-1.4\n";
-      const offsets = [];
-      for (let i = 1; i < objs.length; i++) {
-        offsets[i] = out.length;
-        out += `${i} 0 obj\n${objs[i]}\nendobj\n`;
-      }
-      const xref = out.length;
-      out += `xref\n0 ${objs.length}\n0000000000 65535 f \n`;
-      for (let i = 1; i < objs.length; i++) out += `${String(offsets[i]).padStart(10, "0")} 00000 n \n`;
-      out += `trailer\n<< /Size ${objs.length} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
-      return out;
+      ops.push({ k: "c", x: Math.round(cx * 100) / 100, y: Math.round(cy * 100) / 100, r, fill });
     },
   };
   return api;
@@ -9289,11 +9374,23 @@ function buildProgressionPdf({ clientName, exercises, sessions, zones }) {
     pdf.text(M, pdf.H - 22, `Philémon Musculation - Bilan de progression${clientName ? " - " + clientName : ""}`, { size: 8, color: "#999999" });
     pdf.text(pdf.W - M, pdf.H - 22, `Page ${i + 1} / ${total}`, { size: 8, color: "#999999", align: "right" });
   }
-  return { binary: pdf.build(), count: list.length };
+  return { pages: pdf.getPages(), count: list.length };
 }
 
 function pdfBinaryToDataUrl(binary) {
   return "data:application/pdf;base64," + btoa(binary);
+}
+
+// Télécharge un bilan : PDF fabriqué à la demande à partir des pages stockées
+// (ou PDF déjà stocké pour les anciens bilans).
+function downloadBilanFile(b) {
+  const href = b.dataUrl || pdfBinaryToDataUrl(pdfAssemble(b.pages || []));
+  const link = document.createElement("a");
+  link.href = href;
+  link.download = b.name;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
 }
 
 function ProgressionView({ data, clientId, role, activeClient }) {
@@ -9416,8 +9513,8 @@ function ProgressionView({ data, clientId, role, activeClient }) {
           name: `Bilan progression - ${safeName} - ${dayFr}.pdf`,
           createdAt: iso,
           exerciseCount: result.count,
-          dataUrl: pdfBinaryToDataUrl(result.binary),
-          size: result.binary.length,
+          pages: result.pages,
+          size: JSON.stringify(result.pages).length,
         };
         const ok = await persistBilans([entry, ...bilans]);
         if (ok) setBilanMsg(`Bilan créé (${result.count} exercice${result.count > 1 ? "s" : ""}).`);
@@ -9434,20 +9531,18 @@ function ProgressionView({ data, clientId, role, activeClient }) {
   };
 
   const [bilanViewer, setBilanViewer] = useState(null);
-  const previewBilan = async (b) => {
+  const previewBilan = (b) => {
     try {
-      const res = await fetch(b.dataUrl);
-      const buf = await res.arrayBuffer();
-      const blobUrl = URL.createObjectURL(new Blob([buf], { type: "application/pdf" }));
-      setBilanViewer({ url: blobUrl, name: b.name, dataUrl: b.dataUrl });
+      if (b.pages) {
+        setBilanViewer({ bilan: b, images: pdfRenderPagesToImages(b.pages, 2) });
+      } else {
+        setBilanMsg("Ce bilan a été créé avec une ancienne version : télécharge-le avec ⬇, ou recrée-le.");
+      }
     } catch (e) {
       setBilanMsg("Impossible d'ouvrir ce bilan.");
     }
   };
-  const closeBilanViewer = () => {
-    if (bilanViewer) URL.revokeObjectURL(bilanViewer.url);
-    setBilanViewer(null);
-  };
+  const closeBilanViewer = () => setBilanViewer(null);
 
   return (
     <div>
@@ -9455,13 +9550,17 @@ function ProgressionView({ data, clientId, role, activeClient }) {
       {bilanViewer && (
         <div style={{ position: "fixed", inset: 0, zIndex: 3000, background: COLORS.bg, display: "flex", flexDirection: "column" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "10px 14px", borderBottom: `1px solid ${COLORS.cardBorder}` }}>
-            <div style={{ fontSize: 13, fontWeight: 600, color: COLORS.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{bilanViewer.name}</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: COLORS.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{bilanViewer.bilan.name}</div>
             <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
-              <a href={bilanViewer.dataUrl} download={bilanViewer.name} style={{ ...styles.secondaryBtn, textDecoration: "none", display: "inline-flex", alignItems: "center" }}>⬇ Télécharger</a>
+              <button style={styles.secondaryBtn} onClick={() => downloadBilanFile(bilanViewer.bilan)}>⬇ Télécharger</button>
               <button style={styles.primaryBtn} onClick={closeBilanViewer}>✕ Fermer</button>
             </div>
           </div>
-          <iframe title="Bilan de progression" src={bilanViewer.url} style={{ flex: 1, width: "100%", border: "none", background: "#fff" }} />
+          <div style={{ flex: 1, overflowY: "auto", padding: 14, display: "flex", flexDirection: "column", alignItems: "center", gap: 14, background: "#2a2622" }}>
+            {bilanViewer.images.map((src, i) => (
+              <img key={i} src={src} alt={`Page ${i + 1}`} style={{ width: "100%", maxWidth: 820, height: "auto", background: "#fff", boxShadow: "0 2px 10px rgba(0,0,0,0.5)" }} />
+            ))}
+          </div>
         </div>
       )}
       {isCoach && (
@@ -9505,15 +9604,14 @@ function ProgressionView({ data, clientId, role, activeClient }) {
                       </span>
                     </button>
                     <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
-                      <a
-                        href={b.dataUrl}
-                        download={b.name}
-                        style={{ ...styles.secondaryBtn, padding: "4px 8px", textDecoration: "none", display: "inline-flex", alignItems: "center" }}
+                      <button
+                        style={{ ...styles.secondaryBtn, padding: "4px 8px" }}
+                        onClick={() => downloadBilanFile(b)}
                         title="Télécharger"
                         aria-label="Télécharger"
                       >
                         ⬇
-                      </a>
+                      </button>
                       <button style={styles.trashBtn} onClick={() => deleteBilan(b.id)} title="Supprimer le bilan" aria-label="Supprimer le bilan">🗑️</button>
                     </div>
                   </div>
