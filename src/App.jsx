@@ -247,20 +247,30 @@ function makeEntries(exerciceIds, exercisesMap) {
 // (même nom) faite par ce client, pour pré-remplir la nouvelle séance au
 // lieu de valeurs par défaut arbitraires.
 function getPreviousEntriesSameSeance(allSessions, seanceNom, excludeSessionId) {
-  if (!seanceNom) return null;
-  const candidats = (allSessions || [])
+  const sorted = (allSessions || [])
     .map((s, idx) => ({ s, idx }))
-    .filter(({ s }) => s.id !== excludeSessionId && s.seanceNom === seanceNom)
+    .filter(({ s }) => s.id !== excludeSessionId)
     .sort((a, b) => {
       if (a.s.date !== b.s.date) return a.s.date < b.s.date ? 1 : -1;
       return b.idx - a.idx;
-    });
-  if (candidats.length === 0) return null;
+    })
+    .map(({ s }) => s);
   const map = {};
-  candidats[0].s.entries.forEach((e) => {
-    map[e.exerciceId + "_" + e.serie] = { reps: e.reps, charge: e.charge, paliers: e.paliers };
-  });
-  return map;
+  const addFrom = (sess) => {
+    (sess.entries || []).forEach((e) => {
+      const k = e.exerciceId + "_" + e.serie;
+      if (map[k]) return;
+      if (e.reps == null && e.charge == null) return;
+      map[k] = { reps: e.reps, charge: e.charge, paliers: e.paliers, pdc: e.pdc };
+    });
+  };
+  // 1) Priorité : la dernière séance du même nom.
+  const same = seanceNom ? sorted.find((s) => s.seanceNom === seanceNom) : null;
+  if (same) addFrom(same);
+  // 2) Repli : pour les exercices absents (séance renommée, dupliquée, exercice
+  // ajouté...), la dernière valeur connue de cet exercice, comme "Dernière fois".
+  sorted.forEach(addFrom);
+  return Object.keys(map).length ? map : null;
 }
 
 // Applique les valeurs de la dernière séance identique (si elle existe) sur
@@ -3967,7 +3977,7 @@ function CircuitTimer({
   defaultWork = WARMUP_WORK_SECONDS,
   defaultRest = WARMUP_REST_SECONDS,
   defaultRoundRest = WARMUP_ROUND_REST_SECONDS,
-  defaultRounds = 2,
+  defaultRounds = 3,
   workInMinutes = false,
   customPhases = null,
   customSummary = null,
@@ -6063,7 +6073,7 @@ function SessionBilanAvantForm({ bilan, onChange }) {
       </div>
 
       <div>
-        <label style={styles.fieldLabel}>Remarque</label>
+        <label style={styles.fieldLabel}>Remarque pour améliorer la séance suivante</label>
         <textarea
           style={styles.textArea}
           rows={2}
@@ -6092,45 +6102,6 @@ function SessionBilanForm({ bilan, onChange, role }) {
       <div style={styles.sectionHeader}>Bilan après séance</div>
 
       <div style={{ marginBottom: 16 }}>
-        <label style={styles.fieldLabel}>Difficulté</label>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {difficulteOptions.map((opt) => (
-            <button
-              key={opt.value}
-              onClick={() => onChange("difficulte", bilan.difficulte === opt.value ? null : opt.value)}
-              style={{
-                ...styles.bilanScaleBtn,
-                width: "auto",
-                padding: "6px 16px",
-                ...(bilan.difficulte === opt.value ? styles.bilanScaleBtnActive : {}),
-              }}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div style={{ marginBottom: 16 }}>
-        <label style={styles.fieldLabel}>Sensation</label>
-        <div style={{ display: "flex", gap: 10 }}>
-          {sensationOptions.map((opt) => (
-            <button
-              key={opt.value}
-              onClick={() => onChange("sensation", bilan.sensation === opt.value ? null : opt.value)}
-              style={{
-                ...styles.bilanSensationBtn,
-                ...(bilan.sensation === opt.value ? styles.bilanSensationBtnActive : {}),
-              }}
-              title={opt.label}
-            >
-              <span style={{ fontSize: 24 }}>{opt.emoji}</span>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div style={{ marginBottom: 16 }}>
         <label style={styles.fieldLabel}>J'ai une douleur ?</label>
         <textarea
           style={styles.textArea}
@@ -6142,13 +6113,13 @@ function SessionBilanForm({ bilan, onChange, role }) {
       </div>
 
       <div>
-        <label style={styles.fieldLabel}>Remarque</label>
+        <label style={styles.fieldLabel}>Remarque pour améliorer la séance suivante</label>
         <textarea
           style={styles.textArea}
           rows={2}
           value={bilan.remarque || ""}
           onChange={(e) => onChange("remarque", e.target.value)}
-          placeholder="Toute autre observation sur la séance..."
+          placeholder="Ex: augmenter la charge, changer un exercice, allonger les repos..."
         />
       </div>
 
@@ -10264,7 +10235,7 @@ function EditSeanceTypeForm({ data, seanceType, onCancel, onSave }) {
   const [warmupWorkSeconds, setWarmupWorkSeconds] = useState(seanceType.warmupWorkSeconds ?? WARMUP_WORK_SECONDS);
   const [warmupRestSeconds, setWarmupRestSeconds] = useState(seanceType.warmupRestSeconds ?? WARMUP_REST_SECONDS);
   const [warmupRoundRestSeconds, setWarmupRoundRestSeconds] = useState(seanceType.warmupRoundRestSeconds ?? WARMUP_ROUND_REST_SECONDS);
-  const [warmupRounds, setWarmupRounds] = useState(seanceType.warmupRounds ?? 2);
+  const [warmupRounds, setWarmupRounds] = useState(seanceType.warmupRounds ?? 3);
   const [distancielCircuits, setDistancielCircuits] = useState(seanceType.distancielCircuits || []);
   const toggleKey = (key) => setSelectedKeys((p) => (p.includes(key) ? p.filter((x) => x !== key) : [...p, key]));
   return (
