@@ -9196,9 +9196,83 @@ function pdfShortDate(iso) {
   return `${d}/${m}/${y.slice(2)}`;
 }
 
+const COL_NOTE = "#E8590C";
+
+function pdfWrapText(text, maxWidth, size) {
+  const words = String(text).split(/\s+/).filter(Boolean);
+  const lines = [];
+  let cur = "";
+  words.forEach((wd) => {
+    const test = cur ? cur + " " + wd : wd;
+    if (pdfTextWidth(test, size, false) > maxWidth && cur) {
+      lines.push(cur);
+      cur = wd;
+    } else {
+      cur = test;
+    }
+  });
+  if (cur) lines.push(cur);
+  return lines;
+}
+
+// Phrase d'analyse d'une courbe (règles simples, sans IA).
+// kind : "reps" | "temps" | "charge" | "duree" | "distance" | "denivele" | "resp"
+function pdfAnalyseSerie(kind, values, labels, fmt) {
+  const idx = [];
+  values.forEach((v, i) => { if (v != null) idx.push(i); });
+  if (!idx.length) return "";
+  const vals = idx.map((i) => values[i]);
+  const first = vals[0];
+  const last = vals[vals.length - 1];
+  const n = vals.length;
+  const names = {
+    reps: ["Les répétitions", "répétitions"],
+    temps: ["Le temps de travail", "temps de travail"],
+    charge: ["La charge", "charge"],
+    duree: ["La durée", "durée"],
+    distance: ["La distance", "distance"],
+    denivele: ["Le dénivelé", "dénivelé"],
+    resp: ["Le nombre de respirations", "respirations"],
+  }[kind];
+  if (n === 1) return `${names[0]} : une seule séance enregistrée (${fmt(first)}), c'est le point de départ. Il faudra quelques séances de plus pour dégager une tendance.`;
+  const pct = first > 0 ? Math.round(((last - first) / first) * 100) : 0;
+  const maxV = Math.max(...vals);
+  const maxI = idx[vals.indexOf(maxV)];
+  let s;
+  if (pct >= 20) s = `${names[0]} : de ${fmt(first)} à ${fmt(last)} (+${pct} %), très belle progression.`;
+  else if (pct >= 5) s = `${names[0]} : de ${fmt(first)} à ${fmt(last)} (+${pct} %), progression régulière.`;
+  else if (pct > -5) s = `${names[0]} : stable (${fmt(first)} au départ, ${fmt(last)} aujourd'hui) sur ${n} séances.`;
+  else s = `${names[0]} : en baisse, de ${fmt(first)} à ${fmt(last)} (${pct} %).`;
+  if (n >= 3) {
+    const l3 = vals.slice(-3);
+    if (l3[0] < l3[1] && l3[1] < l3[2]) s += " La tendance des 3 dernières séances est à la hausse.";
+    else if (l3[0] > l3[1] && l3[1] > l3[2]) s += " Attention : baisse sur les 3 dernières séances.";
+  }
+  if (last === maxV && pct > -5 && n >= 3) s += " La dernière séance est le meilleur résultat.";
+  else if (last < maxV) s += ` Meilleur résultat : ${fmt(maxV)} (séance du ${pdfShortDate(labels[maxI])}).`;
+  return s;
+}
+
+// Interprétation globale d'un exercice (reps + charge) : met les deux courbes en relation.
+function pdfAnalyseCombine(repsVals, chargeVals) {
+  const f = (arr) => arr.filter((v) => v != null);
+  const r = f(repsVals);
+  const c = f(chargeVals);
+  if (r.length < 2 || c.length < 2) return "";
+  const rp = r[0] > 0 ? (r[r.length - 1] - r[0]) / r[0] : 0;
+  const cp = c[0] > 0 ? (c[c.length - 1] - c[0]) / c[0] : 0;
+  if (cp >= 0.05 && rp >= -0.05) return "Bilan : la charge augmente sans perdre de répétitions, c'est le signe d'un gain de force réel.";
+  if (cp >= 0.05 && rp < -0.05) return "Bilan : la charge augmente au prix de moins de répétitions, ce qui est normal avec une charge plus lourde. Consolider avant de monter encore.";
+  if (cp > -0.05 && rp >= 0.05) return "Bilan : à charge égale, les répétitions augmentent. Bon moment pour augmenter la charge.";
+  if (cp > -0.05 && rp > -0.05) return "Bilan : charge et répétitions stagnent. Pense à varier la charge, le tempo ou le nombre de séries pour relancer la progression.";
+  if (cp <= -0.05) return "Bilan : la charge a baissé. À vérifier : fatigue, douleur, changement de machine ou de technique.";
+  return "";
+}
+
 // Dessine un bloc "courbe" : titre, résumé, grille, axes, courbes.
 // series : [{ name, color, values[], axis: "left"|"right", fmt(v) }]
-function pdfDrawChartBlock(pdf, { x, y, w, h, title, labels, series }) {
+function pdfDrawChartBlock(pdf, { x, y, w, h, title, labels, series, notes = [] }) {
+  const noteH = notes.length ? 16 + notes.length * 11 + 4 : 0;
   pdf.rect(x, y, w, h, { stroke: "#dddddd", width: 0.8 });
   pdf.text(x + 10, y + 16, title, { size: 11, bold: true, color: "#111111" });
   // Résumé : première → dernière valeur
@@ -9226,7 +9300,7 @@ function pdfDrawChartBlock(pdf, { x, y, w, h, title, labels, series }) {
   const pl = x + 40;
   const pr = x + w - (hasRight ? 40 : 26);
   const pt = y + 42;
-  const pb = y + h - 22;
+  const pb = y + h - 22 - noteH;
   const plotW = pr - pl;
   const plotH = pb - pt;
   const scales = {};
@@ -9278,6 +9352,12 @@ function pdfDrawChartBlock(pdf, { x, y, w, h, title, labels, series }) {
       pdf.circle(lx - tw - 8, y + 13.5, 3, { fill: s.color });
       lx -= tw + 22;
     });
+  }
+  if (notes.length) {
+    const ny = y + h - noteH;
+    pdf.line(x + 10, ny, x + w - 10, ny, { color: "#e6e6e6", width: 0.6 });
+    pdf.text(x + 10, ny + 12, "Lecture de la courbe", { size: 8, bold: true, color: COL_NOTE });
+    notes.forEach((ln, i) => pdf.text(x + 10, ny + 24 + i * 11, ln, { size: 8.5, color: "#333333" }));
   }
 }
 
@@ -9334,7 +9414,9 @@ function buildProgressionPdf({ clientName, exercises, sessions, zones }) {
       ];
       defs.forEach((d) => {
         if (!pts.some((p) => p[d.key] != null)) return;
-        blocks.push({ title: `${name} - ${d.label}`, labels, series: [{ name: d.label, color: d.color, axis: "left", values: pts.map((p) => p[d.key]), fmt: d.fmt }] });
+        const vv = pts.map((p) => p[d.key]);
+        const kindC = d.key === "reps" ? "duree" : d.key === "distanceKm" ? "distance" : "denivele";
+        blocks.push({ title: `${name} - ${d.label}`, labels, series: [{ name: d.label, color: d.color, axis: "left", values: vv, fmt: d.fmt }], notesText: [pdfAnalyseSerie(kindC, vv, labels, d.fmt)] });
       });
     } else {
       const seconds = isWarmupExercise(ex) || isGainageExercise(ex);
@@ -9342,7 +9424,16 @@ function buildProgressionPdf({ clientName, exercises, sessions, zones }) {
       const series = [];
       if (pts.some((p) => p.reps != null)) series.push({ name: repsLabel, color: COL_A, axis: "left", values: pts.map((p) => p.reps), fmt: pdfFmtNum });
       if (pts.some((p) => p.charge != null)) series.push({ name: "Charge (kg)", color: COL_B, axis: series.length ? "right" : "left", values: pts.map((p) => p.charge), fmt: pdfFmtNum });
-      if (series.length) blocks.push({ title: name, labels, series });
+      if (series.length) {
+        const notesText = [];
+        const repsKind = seconds ? "temps" : isEndSessionExercise(ex) ? "resp" : "reps";
+        const rs = series.find((s) => s.color === COL_A);
+        const cs = series.find((s) => s.color === COL_B);
+        if (rs) notesText.push(pdfAnalyseSerie(repsKind, rs.values, labels, (v) => `${pdfFmtNum(v)}${seconds ? " s" : ""}`));
+        if (cs) notesText.push(pdfAnalyseSerie("charge", cs.values, labels, (v) => `${pdfFmtNum(v)} kg`));
+        if (rs && cs) notesText.push(pdfAnalyseCombine(rs.values, cs.values));
+        blocks.push({ title: name, labels, series, notesText });
+      }
     }
   });
   if (!blocks.length) return null;
@@ -9361,12 +9452,14 @@ function buildProgressionPdf({ clientName, exercises, sessions, zones }) {
   pdf.text(M, 82, `Édité le ${todayFr}  ·  Séances du ${pdfShortDate(allDates[0])} au ${pdfShortDate(allDates[allDates.length - 1])}  ·  ${list.length} exercice${list.length > 1 ? "s" : ""} avec données`, { size: 9, color: "#666666" });
   let cy = 98;
   blocks.forEach((b) => {
-    if (cy + BH > pdf.H - 42) {
+    const notes = (b.notesText || []).filter(Boolean).flatMap((t) => pdfWrapText(t, pdf.W - 2 * M - 20, 8.5));
+    const bh = BH + (notes.length ? 16 + notes.length * 11 + 4 : 0);
+    if (cy + bh > pdf.H - 42) {
       pdf.newPage();
       cy = M;
     }
-    pdfDrawChartBlock(pdf, { x: M, y: cy, w: pdf.W - 2 * M, h: BH, title: b.title, labels: b.labels, series: b.series });
-    cy += BH + GAP;
+    pdfDrawChartBlock(pdf, { x: M, y: cy, w: pdf.W - 2 * M, h: bh, title: b.title, labels: b.labels, series: b.series, notes });
+    cy += bh + GAP;
   });
   const total = pdf.pageCount();
   for (let i = 0; i < total; i++) {
