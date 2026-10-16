@@ -295,6 +295,14 @@ function applyPreviousEntries(entries, previousMap, exercisesMap) {
   });
 }
 
+// Applique sur les entries d'une nouvelle séance les supersets enregistrés
+// dans le type de séance (supersets : { exerciceId: "A" | "B" | ... }).
+function applySeanceTypeLayout(entries, seanceType) {
+  const ss = seanceType && seanceType.supersets;
+  if (!ss) return entries;
+  return entries.map((e) => (ss[e.exerciceId] ? { ...e, superset: "sg-" + ss[e.exerciceId] } : e));
+}
+
 function formatDateFR(iso) {
   if (!iso) return "";
   const [y, m, d] = iso.split("-");
@@ -3414,7 +3422,7 @@ function SuiviView({ data, persistSessions, role, activeClient, deleteProgrammeH
   const startFromTemplate = (seanceType) => {
     const baseEntries = makeEntries(seanceType.exerciceIds, exercises);
     const previousMap = getPreviousEntriesSameSeance(data.sessions, seanceType.nom, null);
-    const entries = applyPreviousEntries(baseEntries, previousMap, exercises);
+    const entries = applySeanceTypeLayout(applyPreviousEntries(baseEntries, previousMap, exercises), seanceType);
     if (seanceType.mode === "distanciel") {
       const bookingUri = uid("distanciel");
       addSession({ id: uid("se"), date: quickDate, seanceNom: seanceType.nom, entries, niveaux: seanceType.niveaux || {}, distancielBookingUri: bookingUri });
@@ -5997,6 +6005,32 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
             </div>
           )}
 
+          {isCoach && seanceType && onUpdateWarmupSettings && (
+            <div style={{ marginBottom: 12, textAlign: "center" }}>
+              <button
+                type="button"
+                style={styles.secondaryBtn}
+                onClick={() => {
+                  if (!window.confirm("Enregistrer l'ordre des exercices et les supersets de cette séance dans le type de séance ? Les prochaines séances démarrées les reprendront.")) return;
+                  const ids = [];
+                  const supersetsToSave = {};
+                  Object.keys(grouped).forEach((gk) => {
+                    const rows = grouped[gk];
+                    if (rows[0].instance) return;
+                    const realId = rows[0].exerciceId;
+                    if (!ids.includes(realId)) ids.push(realId);
+                    const sid = rows[0].superset;
+                    if (sid && supersetGroupsMap[sid]) supersetsToSave[realId] = supersetLabels[sid];
+                  });
+                  onUpdateWarmupSettings(seanceType.id, { exerciceIds: ids, supersets: supersetsToSave });
+                }}
+                title="Mémorise l'ordre et les supersets dans le type de séance"
+              >
+                💾 Enregistrer cet ordre et ces supersets dans la séance type
+              </button>
+            </div>
+          )}
+
           <SessionBilanForm bilan={bilan} onChange={updateBilan} role={role} />
 
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8, gap: 10 }}>
@@ -6178,7 +6212,7 @@ function NewSessionForm({ data, onCancel, onSave }) {
     const baseEntries = makeEntries(exerciceIds, exercisesMap);
     const st = data.seanceTypes.find((s) => s.id === seanceTypeId);
     const previousMap = st ? getPreviousEntriesSameSeance(data.sessions, st.nom, null) : null;
-    const entries = applyPreviousEntries(baseEntries, previousMap, exercisesMap);
+    const entries = applySeanceTypeLayout(applyPreviousEntries(baseEntries, previousMap, exercisesMap), st);
     onSave({ id: uid("se"), date, seanceNom: st ? st.nom : null, entries, niveaux });
   };
 
@@ -10826,6 +10860,83 @@ function DistancielCircuitsEditor({ data, circuits, setCircuits }) {
   );
 }
 
+const SEANCE_SUPERSET_LETTERS = ["A", "B", "C", "D", "E"];
+const SEANCE_SUPERSET_COLORS = { A: "#FF6400", B: "#3B82F6", C: "#22C55E", D: "#A855F7", E: "#EAB308" };
+
+// Ordre des exercices + supersets, enregistrés une fois pour toutes dans le
+// type de séance (repris à chaque nouvelle séance démarrée).
+function SeanceLayoutEditor({ orderedIds, setOrder, supersets, setSupersets, exercisesMap }) {
+  if (orderedIds.length < 2) return null;
+  const zones = groupExIdsByZone(orderedIds, exercisesMap);
+  const move = (id, dir, zoneIds) => {
+    const i = zoneIds.indexOf(id);
+    const nb = zoneIds[i + dir];
+    if (nb == null) return;
+    const arr = [...orderedIds];
+    const a1 = arr.indexOf(id);
+    const a2 = arr.indexOf(nb);
+    [arr[a1], arr[a2]] = [arr[a2], arr[a1]];
+    setOrder(arr);
+  };
+  const setLetter = (id, letter) => {
+    setSupersets((p) => {
+      const n = { ...p };
+      if (letter) n[id] = letter;
+      else delete n[id];
+      return n;
+    });
+  };
+  const countByLetter = {};
+  orderedIds.forEach((id) => { if (supersets[id]) countByLetter[supersets[id]] = (countByLetter[supersets[id]] || 0) + 1; });
+  return (
+    <div style={{ marginTop: 14 }}>
+      <label style={styles.fieldLabel}>Ordre des exercices et supersets</label>
+      <p style={{ fontSize: 11, color: COLORS.textFaint, marginTop: -4, marginBottom: 8 }}>
+        Réglé ici une fois pour toutes : chaque nouvelle séance démarrée reprend cet ordre et ces supersets (modifiables ensuite séance par séance). Les exercices qui ont la même lettre sont en superset.
+      </p>
+      <div style={{ ...styles.checklist, maxHeight: 340 }}>
+        {zones.map(([label, ids]) => (
+          <div key={label} style={{ marginBottom: 8 }}>
+            <div style={{ fontSize: 10, color: COLORS.textFaint, textTransform: "uppercase", letterSpacing: 0.5, margin: "6px 0 4px" }}>{label}</div>
+            {ids.map((id, i) => {
+              const letter = supersets[id] || "";
+              const color = letter ? SEANCE_SUPERSET_COLORS[letter] : null;
+              return (
+                <div
+                  key={id}
+                  style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4, padding: "4px 6px", borderRadius: 6, background: COLORS.bg2, borderLeft: `3px solid ${color || "transparent"}` }}
+                >
+                  <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: COLORS.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {exDisplayName(exercisesMap[id])}
+                  </span>
+                  <select
+                    value={letter}
+                    onChange={(e) => setLetter(id, e.target.value)}
+                    style={{ ...styles.textInput, width: "auto", padding: "2px 6px", fontSize: 11, marginBottom: 0, color: color || COLORS.textDim }}
+                    title="Superset"
+                  >
+                    <option value="">Pas de superset</option>
+                    {SEANCE_SUPERSET_LETTERS.map((l) => (
+                      <option key={l} value={l}>Superset {l}</option>
+                    ))}
+                  </select>
+                  <button type="button" style={{ ...styles.secondaryBtn, padding: "2px 8px" }} disabled={i === 0} onClick={() => move(id, -1, ids)} title="Monter">↑</button>
+                  <button type="button" style={{ ...styles.secondaryBtn, padding: "2px 8px" }} disabled={i === ids.length - 1} onClick={() => move(id, 1, ids)} title="Descendre">↓</button>
+                </div>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+      {Object.keys(countByLetter).some((l) => countByLetter[l] < 2) && (
+        <div style={{ fontSize: 11, color: COLORS.textFaint, marginTop: 6 }}>
+          Un superset a besoin d'au moins 2 exercices : une lettre utilisée une seule fois est ignorée.
+        </div>
+      )}
+    </div>
+  );
+}
+
 function NewSeanceTypeForm({ data, onCancel, onSave }) {
   const [nom, setNom] = useState("");
   const [selectedKeys, setSelectedKeys] = useState([]);
@@ -10833,6 +10944,10 @@ function NewSeanceTypeForm({ data, onCancel, onSave }) {
   const [mode, setMode] = useState("presentiel");
   const [lieu, setLieu] = useState("salle");
   const [distancielCircuits, setDistancielCircuits] = useState([]);
+  const [order, setOrder] = useState([]);
+  const [supersets, setSupersets] = useState({});
+  const selectedIds = finalizeSelection(selectedKeys, niveauxByKey, exMap(data)).exerciceIds;
+  const orderedIds = [...order.filter((id) => selectedIds.includes(id)), ...selectedIds.filter((id) => !order.includes(id))];
   const toggleKey = (key) => setSelectedKeys((p) => (p.includes(key) ? p.filter((x) => x !== key) : [...p, key]));
   const exercisesMap = exMap(data);
   return (
@@ -10876,6 +10991,7 @@ function NewSeanceTypeForm({ data, onCancel, onSave }) {
           </div>
         ))}
       </div>
+      <SeanceLayoutEditor orderedIds={orderedIds} setOrder={setOrder} supersets={supersets} setSupersets={setSupersets} exercisesMap={exMap(data)} />
       <div style={{ display: "flex", gap: 10, marginTop: 14, justifyContent: "flex-end" }}>
         <button style={styles.secondaryBtn} onClick={onCancel}>Annuler</button>
         <button
@@ -10887,8 +11003,13 @@ function NewSeanceTypeForm({ data, onCancel, onSave }) {
             // exercices inclus, sinon ils n'existent pas dans les séances
             // enregistrées et le circuit n'a rien à afficher.
             const circuitExIds = mode === "distanciel" ? distancielCircuits.flatMap((c) => c.exerciceIds || []) : [];
-            const mergedExerciceIds = Array.from(new Set([...exerciceIds, ...circuitExIds]));
+            const mergedExerciceIds = Array.from(new Set([...orderedIds, ...circuitExIds]));
+            const counts = {};
+            orderedIds.forEach((id) => { if (supersets[id]) counts[supersets[id]] = (counts[supersets[id]] || 0) + 1; });
+            const supersetsClean = {};
+            orderedIds.forEach((id) => { if (supersets[id] && counts[supersets[id]] >= 2) supersetsClean[id] = supersets[id]; });
             onSave({
+              supersets: supersetsClean,
               nom, exerciceIds: mergedExerciceIds, niveaux, mode, lieu: mode === "distanciel" ? lieu : null,
               distancielCircuits: mode === "distanciel" ? distancielCircuits : [],
             });
@@ -10922,6 +11043,10 @@ function EditSeanceTypeForm({ data, seanceType, onCancel, onSave }) {
   const [warmupRoundRestSeconds, setWarmupRoundRestSeconds] = useState(seanceType.warmupRoundRestSeconds ?? WARMUP_ROUND_REST_SECONDS);
   const [warmupRounds, setWarmupRounds] = useState(seanceType.warmupRounds ?? 3);
   const [distancielCircuits, setDistancielCircuits] = useState(seanceType.distancielCircuits || []);
+  const [order, setOrder] = useState(seanceType.exerciceIds);
+  const [supersets, setSupersets] = useState(seanceType.supersets || {});
+  const selectedIds = finalizeSelection(selectedKeys, niveauxByKey, exMap(data)).exerciceIds;
+  const orderedIds = [...order.filter((id) => selectedIds.includes(id)), ...selectedIds.filter((id) => !order.includes(id))];
   const toggleKey = (key) => setSelectedKeys((p) => (p.includes(key) ? p.filter((x) => x !== key) : [...p, key]));
   return (
     <div style={{ ...styles.card, borderColor: COLORS.accent2 }}>
@@ -10983,6 +11108,7 @@ function EditSeanceTypeForm({ data, seanceType, onCancel, onSave }) {
           </div>
         ))}
       </div>
+      <SeanceLayoutEditor orderedIds={orderedIds} setOrder={setOrder} supersets={supersets} setSupersets={setSupersets} exercisesMap={exMap(data)} />
       <div style={{ display: "flex", gap: 10, marginTop: 14, justifyContent: "flex-end" }}>
         <button style={styles.secondaryBtn} onClick={onCancel}>Annuler</button>
         <button
@@ -10994,8 +11120,13 @@ function EditSeanceTypeForm({ data, seanceType, onCancel, onSave }) {
             // exercices inclus, sinon ils n'existent pas dans les séances
             // enregistrées et le circuit n'a rien à afficher.
             const circuitExIds = mode === "distanciel" ? distancielCircuits.flatMap((c) => c.exerciceIds || []) : [];
-            const mergedExerciceIds = Array.from(new Set([...exerciceIds, ...circuitExIds]));
+            const mergedExerciceIds = Array.from(new Set([...orderedIds, ...circuitExIds]));
+            const counts = {};
+            orderedIds.forEach((id) => { if (supersets[id]) counts[supersets[id]] = (counts[supersets[id]] || 0) + 1; });
+            const supersetsClean = {};
+            orderedIds.forEach((id) => { if (supersets[id] && counts[supersets[id]] >= 2) supersetsClean[id] = supersets[id]; });
             onSave({
+              supersets: supersetsClean,
               nom, exerciceIds: mergedExerciceIds, niveaux, mode, lieu: mode === "distanciel" ? lieu : null,
               warmupWorkSeconds, warmupRestSeconds, warmupRoundRestSeconds, warmupRounds,
               distancielCircuits: mode === "distanciel" ? distancielCircuits : [],
