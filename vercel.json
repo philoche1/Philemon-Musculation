@@ -3,6 +3,10 @@
     {
       "path": "/api/sync-meta-leads",
       "schedule": "0 8 * * *"
+    },
+    {
+      "path": "/api/courbatures?action=cron",
+      "schedule": "0 7 * * *"
     }
   ]
 }
