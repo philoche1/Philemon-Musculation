@@ -9563,6 +9563,92 @@ function downloadBilanFile(b) {
   document.body.removeChild(link);
 }
 
+const courbaturesKey = (clientId) => `courbatures-v1-${clientId}`;
+
+// Réponses au questionnaire "courbatures" (envoyé par email 2 jours après une
+// séance réservée) : historique daté, courbe d'intensité, zones touchées.
+function CourbaturesPanel({ clientId, activeClient }) {
+  const [entries, setEntries] = useState(null);
+  useEffect(() => {
+    if (!clientId) return;
+    let cancelled = false;
+    setEntries(null);
+    (async () => {
+      let list = [];
+      try {
+        const r = await window.storage.get(courbaturesKey(clientId), true);
+        if (r && r.value) list = JSON.parse(r.value);
+      } catch (e) {}
+      if (!cancelled) setEntries(Array.isArray(list) ? list : []);
+    })();
+    return () => { cancelled = true; };
+  }, [clientId]);
+
+  const sorted = (entries || []).slice().sort((x, y) => (x.sessionDate < y.sessionDate ? 1 : -1));
+  const answered = sorted.filter((e) => e.answeredAt);
+  const chartData = answered.slice().reverse().map((e) => ({ date: formatDateFR(e.sessionDate.slice(0, 10)), intensite: e.intensite }));
+  const optedOut = activeClient && activeClient.courbaturesQuestionnaire === false;
+  const intensityColor = (n) => (n >= 7 ? COLORS.danger : n >= 4 ? COLORS.accent : COLORS.accent2);
+
+  return (
+    <div style={{ ...styles.card, marginBottom: 16 }}>
+      <div style={{ fontSize: 14, fontWeight: 600, color: COLORS.text }}>Questionnaire courbatures</div>
+      <div style={{ fontSize: 12, color: COLORS.textDim, marginTop: 2 }}>
+        Envoyé par email 2 jours après chaque séance réservée.{" "}
+        {optedOut ? <span style={{ color: COLORS.danger }}>Ce client a choisi de ne plus le recevoir.</span> : "Actif pour ce client."}
+      </div>
+      {entries === null ? (
+        <div style={{ fontSize: 12, color: COLORS.textFaint, marginTop: 10 }}>Chargement…</div>
+      ) : sorted.length === 0 ? (
+        <div style={{ fontSize: 12, color: COLORS.textFaint, marginTop: 10 }}>Aucun questionnaire envoyé pour l'instant.</div>
+      ) : (
+        <>
+          {chartData.length >= 2 && (
+            <div style={{ height: 160, marginTop: 12 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={chartData} margin={{ top: 6, right: 16, left: -18, bottom: 0 }}>
+                  <CartesianGrid stroke={COLORS.cardBorder} strokeDasharray="3 3" />
+                  <XAxis dataKey="date" stroke={COLORS.textFaint} tick={{ fontSize: 10, fill: COLORS.textDim }} />
+                  <YAxis domain={[0, 10]} stroke={COLORS.textFaint} tick={{ fontSize: 10, fill: COLORS.textDim }} />
+                  <Tooltip contentStyle={{ background: COLORS.bg2, border: `1px solid ${COLORS.cardBorder}`, borderRadius: 8, fontSize: 12 }} formatter={(v) => [`${v}/10`, "Intensité"]} />
+                  <Line type="monotone" dataKey="intensite" stroke={COLORS.accent} strokeWidth={2} dot={{ r: 3 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 12 }}>
+            {sorted.map((e) => (
+              <div key={e.id} style={{ padding: "8px 10px", border: `1px solid ${COLORS.cardBorder}`, borderRadius: 8, opacity: e.answeredAt ? 1 : 0.6 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: COLORS.text }}>Séance du {formatDateFR(e.sessionDate.slice(0, 10))}</span>
+                  {e.answeredAt ? (
+                    <span style={{ fontSize: 12, fontWeight: 700, color: intensityColor(e.intensite) }}>{e.intensite}/10</span>
+                  ) : (
+                    <span style={{ fontSize: 11, color: COLORS.textFaint }}>En attente de réponse</span>
+                  )}
+                </div>
+                {e.answeredAt && (
+                  <div style={{ marginTop: 4 }}>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                      {(e.zones || []).length === 0 ? (
+                        <span style={{ fontSize: 11, color: COLORS.textFaint }}>Aucune zone indiquée</span>
+                      ) : (
+                        e.zones.map((z) => <span key={z} style={styles.pill}>{z}</span>)
+                      )}
+                    </div>
+                    {e.commentaire && <div style={{ fontSize: 12, color: COLORS.textDim, marginTop: 4 }}>« {e.commentaire} »</div>}
+                    <div style={{ fontSize: 10, color: COLORS.textFaint, marginTop: 4 }}>Répondu le {formatDateFR(e.answeredAt.slice(0, 10))}</div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function ProgressionView({ data, clientId, role, activeClient }) {
   const zones = useMemo(() => {
     const seen = [];
@@ -9791,6 +9877,7 @@ function ProgressionView({ data, clientId, role, activeClient }) {
           )}
         </div>
       )}
+      {isCoach && <CourbaturesPanel clientId={clientId} activeClient={activeClient} />}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
         <div style={{ flex: "1 1 200px", minWidth: 180 }}>
           <label style={styles.fieldLabel}>Partie du corps</label>
