@@ -191,7 +191,7 @@ const DEFAULT_CHARGE = 10;
 const WARMUP_DEFAULT_SECONDS = 50;
 const ENDSESSION_DEFAULT_RESPIRATION = 4;
 const GAINAGE_DEFAULT_SECONDS = 60;
-const TIMED_DEFAULT_SECONDS = 30;
+const TIMED_DEFAULT_SECONDS = 60;
 
 function isWarmupExercise(ex) {
   return !!ex && getExerciseZones(ex).some((z) => zoneLabel(z) === "Échauffement");
@@ -3649,7 +3649,9 @@ function playBeep(count = 2, toneDuration = 0.3) {
       osc.frequency.value = 880;
       gain.gain.setValueAtTime(0.0001, startTime);
       gain.gain.exponentialRampToValueAtTime(0.9, startTime + 0.01);
-      gain.gain.exponentialRampToValueAtTime(0.0001, startTime + toneDuration - 0.05);
+      // Bip long (> 0,5 s) : son tenu jusqu'à la fin au lieu d'un son qui s'éteint.
+      if (toneDuration > 0.5) gain.gain.setValueAtTime(0.9, startTime + toneDuration - 0.08);
+      gain.gain.exponentialRampToValueAtTime(0.0001, startTime + toneDuration - 0.02);
       osc.connect(gain);
       gain.connect(ctx.destination);
       osc.start(startTime);
@@ -3862,16 +3864,17 @@ function GainageTimer({ defaultDuration = 60 }) {
     return () => clearInterval(id);
   }, [running, secondsLeft > 0]);
 
+  // Départ : un long bip. Fin d'effort : deux bips (voir l'effet sur secondsLeft).
   const toggle = () => {
     if (secondsLeft <= 0) {
       setSecondsLeft(duration);
       setRunning(true);
-      playBeep(1);
+      playBeep(1, 1.2);
     } else if (running) {
       setRunning(false);
     } else {
       setRunning(true);
-      playBeep(1);
+      playBeep(1, secondsLeft === duration ? 1.2 : 0.3);
     }
   };
 
@@ -5889,7 +5892,7 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                             ))}
                           </span>
                         )}
-                        {gainage && !hasCircuitTimer && (
+                        {(gainage || rowTimed) && !hasCircuitTimer && (
                           <button
                             style={{ ...styles.infoBtn, ...styles.infoBtnTimer, ...(openTimer[timerKey] ? styles.infoBtnActive : {}) }}
                             onClick={() => setOpenTimer((p) => ({ ...p, [timerKey]: !p[timerKey] }))}
@@ -5952,7 +5955,7 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                           + Palier (drop-set)
                         </button>
                       )}
-                      {gainage && !hasCircuitTimer && openTimer[timerKey] && <GainageTimer defaultDuration={60} />}
+                      {(gainage || rowTimed) && !hasCircuitTimer && openTimer[timerKey] && <GainageTimer defaultDuration={(rowTimed && row.reps > 0 ? row.reps : 60)} />}
                       </React.Fragment>
                       );
                     })}
