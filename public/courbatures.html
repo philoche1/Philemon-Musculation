@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Questionnaire courbatures — Philémon Musculation</title>
+<style>
+  :root { --o:#FF6400; --bg:#0f0d0b; --card:#1b1713; --b:#3a322a; --t:#f4efe9; --d:#a89d90; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--t); font-family:-apple-system,Segoe UI,Roboto,sans-serif; }
+  .wrap { max-width:520px; margin:0 auto; padding:24px 16px 60px; }
+  h1 { color:var(--o); font-size:20px; margin:0 0 4px; }
+  .sub { color:var(--d); font-size:14px; margin-bottom:20px; }
+  .card { background:var(--card); border:1px solid var(--b); border-radius:12px; padding:16px; margin-bottom:16px; }
+  label.t { display:block; font-weight:600; font-size:14px; margin-bottom:10px; }
+  .chips { display:flex; flex-wrap:wrap; gap:8px; }
+  .chip { border:1px solid var(--b); background:#120f0c; color:var(--t); border-radius:999px; padding:8px 14px; font-size:14px; cursor:pointer; }
+  .chip.on { background:var(--o); border-color:var(--o); color:#fff; font-weight:600; }
+  input[type=range] { width:100%; accent-color:var(--o); }
+  .val { text-align:center; font-size:34px; font-weight:700; color:var(--o); }
+  .lab { text-align:center; font-size:13px; color:var(--d); min-height:18px; }
+  .ends { display:flex; justify-content:space-between; font-size:12px; color:var(--d); }
+  textarea { width:100%; min-height:70px; background:#120f0c; color:var(--t); border:1px solid var(--b); border-radius:8px; padding:10px; font:inherit; }
+  .check { display:flex; gap:10px; align-items:flex-start; font-size:14px; cursor:pointer; }
+  .check input { margin-top:3px; accent-color:var(--o); width:18px; height:18px; }
+  button.go { width:100%; background:var(--o); color:#fff; border:0; border-radius:10px; padding:14px; font-size:16px; font-weight:700; cursor:pointer; }
+  button.go:disabled { opacity:.5; }
+  .msg { text-align:center; padding:50px 10px; }
+  .err { color:#ff6b6b; font-size:13px; margin-bottom:10px; text-align:center; }
+</style>
+</head>
+<body>
+<div class="wrap" id="app"><div class="msg">Chargement…</div></div>
+<script>
+(function () {
+  var app = document.getElementById('app');
+  var token = new URLSearchParams(location.search).get('t') || '';
+  var LABELS = ['Aucune', 'Très légère', 'Très légère', 'Légère', 'Légère', 'Modérée', 'Modérée', 'Marquée', 'Forte', 'Très forte', 'Insupportable'];
+  var zones = [], chosen = [], intensite = 0;
+
+  function show(html) { app.innerHTML = html; }
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+
+  fetch('/api/courbatures?action=info&t=' + encodeURIComponent(token))
+    .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+    .then(function (res) {
+      if (!res.ok) return show('<div class="msg"><h1>Lien invalide ou expiré</h1><p class="sub">Ce questionnaire n\'est plus disponible.</p></div>');
+      var d = res.j;
+      if (d.dejaRepondu) return show('<div class="msg"><h1>Merci !</h1><p class="sub">Tu as déjà répondu à ce questionnaire.</p></div>');
+      zones = d.zones;
+      var date = new Date(d.sessionDate).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
+      show(
+        '<h1>Comment vont tes courbatures' + (d.prenom ? ', ' + esc(d.prenom) : '') + ' ?</h1>' +
+        '<p class="sub">Suite à ta séance du ' + esc(date) + '</p>' +
+        '<div class="card"><label class="t">Où as-tu des courbatures ? (plusieurs choix possibles)</label><div class="chips" id="chips"></div></div>' +
+        '<div class="card"><label class="t">Intensité</label><div class="val" id="val">0</div><div class="lab" id="lab">Aucune</div>' +
+        '<input type="range" id="rng" min="0" max="10" step="1" value="0"><div class="ends"><span>0 · aucune</span><span>10 · insupportable</span></div></div>' +
+        '<div class="card"><label class="t">Un commentaire ? (facultatif)</label><textarea id="com" maxlength="500" placeholder="Ex : surtout à la descente des escaliers"></textarea></div>' +
+        '<div class="card"><label class="check"><input type="checkbox" id="cont"' + (d.continuer ? ' checked' : '') + '><span>Je veux recevoir ce questionnaire après mes prochaines séances</span></label></div>' +
+        '<div class="err" id="err"></div><button class="go" id="go">Envoyer</button>'
+      );
+      var chips = document.getElementById('chips');
+      zones.forEach(function (z) {
+        var b = document.createElement('button'); b.type = 'button'; b.className = 'chip'; b.textContent = z;
+        b.onclick = function () {
+          var i = chosen.indexOf(z);
+          if (i === -1) { chosen.push(z); b.classList.add('on'); } else { chosen.splice(i, 1); b.classList.remove('on'); }
+        };
+        chips.appendChild(b);
+      });
+      var rng = document.getElementById('rng');
+      rng.oninput = function () {
+        intensite = Number(rng.value);
+        document.getElementById('val').textContent = intensite;
+        document.getElementById('lab').textContent = LABELS[intensite];
+      };
+      document.getElementById('go').onclick = function () {
+        var btn = this; btn.disabled = true;
+        fetch('/api/courbatures', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ t: token, intensite: intensite, zones: chosen, commentaire: document.getElementById('com').value, continuer: document.getElementById('cont').checked })
+        }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+          .then(function (res) {
+            if (res.ok) show('<div class="msg"><h1>Merci !</h1><p class="sub">Ta réponse est enregistrée. Bonne récupération 💪</p></div>');
+            else { btn.disabled = false; document.getElementById('err').textContent = 'Impossible d\'enregistrer, réessaie.'; }
+          }).catch(function () { btn.disabled = false; document.getElementById('err').textContent = 'Erreur réseau, réessaie.'; });
+      };
+    })
+    .catch(function () { show('<div class="msg"><h1>Erreur</h1><p class="sub">Impossible de charger le questionnaire.</p></div>'); });
+})();
+</script>
+</body>
+</html>
