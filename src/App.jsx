@@ -191,6 +191,7 @@ const DEFAULT_CHARGE = 10;
 const WARMUP_DEFAULT_SECONDS = 50;
 const ENDSESSION_DEFAULT_RESPIRATION = 4;
 const GAINAGE_DEFAULT_SECONDS = 60;
+const TIMED_DEFAULT_SECONDS = 30;
 
 function isWarmupExercise(ex) {
   return !!ex && getExerciseZones(ex).some((z) => zoneLabel(z) === "Échauffement");
@@ -235,6 +236,8 @@ function makeEntries(exerciceIds, exercisesMap) {
       count = GAINAGE_SERIES_COUNT;
       repsDefault = GAINAGE_DEFAULT_SECONDS;
       chargeDefault = null;
+    } else if (ex && ex.tempsEffort) {
+      repsDefault = TIMED_DEFAULT_SECONDS;
     }
     for (let s = 1; s <= count; s++) {
       entries.push({ exerciceId: exId, serie: s, reps: repsDefault, charge: chargeDefault });
@@ -261,7 +264,7 @@ function getPreviousEntriesSameSeance(allSessions, seanceNom, excludeSessionId) 
       const k = e.exerciceId + "_" + e.serie;
       if (map[k]) return;
       if (e.reps == null && e.charge == null) return;
-      map[k] = { reps: e.reps, charge: e.charge, paliers: e.paliers, pdc: e.pdc };
+      map[k] = { reps: e.reps, charge: e.charge, paliers: e.paliers, pdc: e.pdc, temps: e.temps };
     });
   };
   // 1) Priorité : la dernière séance du même nom.
@@ -289,6 +292,7 @@ function applyPreviousEntries(entries, previousMap, exercisesMap) {
       reps: !cardio && prev && prev.reps != null ? prev.reps : e.reps,
       charge: prev && prev.charge != null ? prev.charge : e.charge,
       pdc: prev && prev.pdc != null ? prev.pdc : e.pdc,
+      temps: prev && prev.temps != null ? prev.temps : e.temps,
       paliers: prev && prev.paliers && prev.paliers.length ? prev.paliers.map((p) => ({ ...p })) : undefined,
       validee: false,
     };
@@ -4713,6 +4717,14 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
     onSave({ entries: copy, bilan, bilanAvant, niveaux: niveauxParExercice });
   };
 
+  // Mode "temps d'effort" (secondes) à la place des répétitions, par série.
+  // Par défaut : le réglage de l'exercice (tempsEffort), sauf choix propre à la série.
+  const toggleTemps = (idx, ex, timedNow) => {
+    const copy = local.map((e, i) => (i === idx ? { ...e, temps: !timedNow, reps: timedNow ? DEFAULT_REPS : TIMED_DEFAULT_SECONDS } : e));
+    setLocal(copy);
+    onSave({ entries: copy, bilan, bilanAvant, niveaux: niveauxParExercice });
+  };
+
   const updateField = (idx, field, value) => {
     const copy = local.map((e, i) => (i === idx ? { ...e, [field]: value === "" ? null : Number(value) } : e));
     setLocal(copy);
@@ -4854,6 +4866,7 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
       reps: template ? template.reps : null,
       charge: template ? template.charge : null,
       pdc: template ? template.pdc : undefined,
+      temps: template ? template.temps : undefined,
       validee: false,
     };
     const updated = [...local, newEntry];
@@ -4922,6 +4935,7 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
           reps: template.reps,
           charge: template.charge,
           pdc: template.pdc,
+          temps: template.temps,
           validee: false,
         };
         updated = [...updated, newEntry];
@@ -5755,6 +5769,10 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                     {rows.map((row, rIdx) => {
                       const prev = previousValues[row.exerciceId + "_" + row.serie];
                       const timerKey = exId + "_" + row.serie;
+                      const regularEx = !warmup && !gainage && !endSession && !circuitTime;
+                      const isTimedSet = (r) => regularEx && (r.temps != null ? !!r.temps : !!(ex && ex.tempsEffort));
+                      const rowTimed = isTimedSet(row);
+                      const prevTimed = prev ? isTimedSet(prev) : false;
                       return (
                       <React.Fragment key={row._idx}>
                       <div style={row.validee ? { ...styles.entryRow, ...styles.entryRowValidated } : styles.entryRow}>
@@ -5787,10 +5805,32 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                           value={row.reps ?? ""}
                           onFocus={(e) => e.target.select()}
                           onChange={(e) => updateField(row._idx, "reps", e.target.value)}
-                          placeholder={warmup || circuitTime ? "Sec." : endSession ? "Resp." : gainage ? "Sec." : "Rép."}
+                          placeholder={warmup || circuitTime || rowTimed ? "Sec." : endSession ? "Resp." : gainage ? "Sec." : "Rép."}
                           style={styles.numInput}
                         />
-                        <span style={styles.unitLabel}>{warmup || circuitTime ? "sec" : endSession ? "resp" : gainage ? "sec" : "rep"}</span>
+                        <span style={styles.unitLabel}>{warmup || circuitTime || rowTimed ? "sec" : endSession ? "resp" : gainage ? "sec" : "rep"}</span>
+                        {regularEx && (
+                          <button
+                            type="button"
+                            onClick={() => toggleTemps(row._idx, ex, rowTimed)}
+                            title={rowTimed ? "Passer en répétitions" : "Passer en temps d'effort (secondes)"}
+                            aria-label={rowTimed ? "Passer en répétitions" : "Passer en temps d'effort"}
+                            style={{
+                              height: 22,
+                              padding: "0 6px",
+                              borderRadius: 5,
+                              border: `1px solid ${rowTimed ? COLORS.accent : COLORS.cardBorder}`,
+                              background: rowTimed ? COLORS.accent : COLORS.bg2,
+                              color: rowTimed ? COLORS.bg : COLORS.textFaint,
+                              fontSize: 10,
+                              fontWeight: 700,
+                              cursor: "pointer",
+                              flexShrink: 0,
+                            }}
+                          >
+                            {rowTimed ? "⏱ Sec" : "Rép"}
+                          </button>
+                        )}
                         {!endSession && (!gainage || isPdc(row, ex)) && (
                           <>
                             {isPdc(row, ex) ? (
@@ -5842,7 +5882,7 @@ function SessionCard({ session, exercises, allSessions, programName, isDistancie
                         {prev && (
                           <span style={styles.prevValue}>
                             Dernière fois : {prev.reps ?? "—"}
-                            {warmup || circuitTime ? "s" : endSession ? " resp." : gainage ? "s" : " rép."}
+                            {warmup || circuitTime || prevTimed ? "s" : endSession ? " resp." : gainage ? "s" : " rép."}
                             {!endSession && (!gainage || isPdc(prev, ex)) && (isPdc(prev, ex) ? <> · poids du corps</> : <> · {prev.charge ?? "—"} kg</>)}
                             {!endSession && !gainage && (prev.paliers || []).map((p, pi) => (
                               <React.Fragment key={pi}> → {p.reps ?? "—"}×{p.charge ?? "—"}kg</React.Fragment>
@@ -9453,7 +9493,7 @@ function buildProgressionPdf({ clientName, exercises, sessions, zones }) {
         blocks.push({ title: `${name} - ${d.label}`, labels, series: [{ name: d.label, color: d.color, axis: "left", values: vv, fmt: d.fmt }], notesText: [pdfAnalyseSerie(kindC, vv, labels, d.fmt)] });
       });
     } else {
-      const seconds = isWarmupExercise(ex) || isGainageExercise(ex);
+      const seconds = isWarmupExercise(ex) || isGainageExercise(ex) || !!ex.tempsEffort;
       const repsLabel = seconds ? "Temps (s)" : isEndSessionExercise(ex) ? "Respirations" : "Répétitions";
       const series = [];
       if (pts.some((p) => p.reps != null)) series.push({ name: repsLabel, color: COL_A, axis: "left", values: pts.map((p) => p.reps), fmt: pdfFmtNum });
@@ -9829,7 +9869,7 @@ function ProgressionView({ data, clientId, role, activeClient }) {
                   <YAxis yAxisId="right" orientation="right" stroke={COLORS.accent2} tick={{ fontSize: 11, fill: COLORS.textDim }} />
                   <Tooltip contentStyle={{ background: COLORS.bg2, border: `1px solid ${COLORS.cardBorder}`, borderRadius: 8, fontSize: 12 }} />
                   <Legend wrapperStyle={{ fontSize: 12 }} />
-                  <Line yAxisId="left" type="monotone" dataKey="reps" name="Répétitions" stroke={COLORS.accent} strokeWidth={2} dot={{ r: 3 }} connectNulls />
+                  <Line yAxisId="left" type="monotone" dataKey="reps" name={ex && ex.tempsEffort ? "Temps (s)" : "Répétitions"} stroke={COLORS.accent} strokeWidth={2} dot={{ r: 3 }} connectNulls />
                   <Line yAxisId="right" type="monotone" dataKey="charge" name="Charge (kg)" stroke={COLORS.accent2} strokeWidth={2} dot={{ r: 3 }} connectNulls />
                 </LineChart>
               </ResponsiveContainer>
@@ -11849,6 +11889,7 @@ function NewExerciseForm({ data, onCancel, onSave }) {
   const [videoUrl, setVideoUrl] = useState("");
   const [maison, setMaison] = useState(false);
   const [poidsDuCorps, setPoidsDuCorps] = useState(false);
+  const [tempsEffort, setTempsEffort] = useState(false);
   const [tempsRepos, setTempsRepos] = useState([]);
   const [niveaux, setNiveaux] = useState([
     { nom: "Bilatéral", consignes: {}, videoUrl: "" },
@@ -11915,6 +11956,11 @@ function NewExerciseForm({ data, onCancel, onSave }) {
         <span style={{ marginLeft: 8 }}>« Poids du corps » par défaut (au lieu des kg)</span>
       </label>
 
+      <label style={{ ...styles.checkItem, marginTop: 8, cursor: "pointer" }}>
+        <input type="checkbox" checked={tempsEffort} onChange={(e) => setTempsEffort(e.target.checked)} />
+        <span style={{ marginLeft: 8 }}>« Temps d'effort » par défaut (secondes au lieu des répétitions)</span>
+      </label>
+
       <label style={styles.fieldLabel}>Temps de repos par série (optionnel)</label>
       <RestTimesFields tempsRepos={tempsRepos} onChange={setTempsRepos} />
 
@@ -11951,6 +11997,7 @@ function NewExerciseForm({ data, onCancel, onSave }) {
               videoUrl: videoUrl.trim(),
               maison,
               poidsDuCorps,
+              tempsEffort,
               tempsRepos,
             })
           }
@@ -11968,6 +12015,7 @@ function EditExerciseForm({ data, exercise, onCancel, onSave }) {
   const [videoUrl, setVideoUrl] = useState(exercise.videoUrl || "");
   const [maison, setMaison] = useState(!!exercise.maison);
   const [poidsDuCorps, setPoidsDuCorps] = useState(!!exercise.poidsDuCorps);
+  const [tempsEffort, setTempsEffort] = useState(!!exercise.tempsEffort);
   const [tempsRepos, setTempsRepos] = useState(Array.isArray(exercise.tempsRepos) ? exercise.tempsRepos : []);
   const [niveaux, setNiveaux] = useState(
     Array.isArray(exercise.niveaux) && exercise.niveaux.length
@@ -12039,6 +12087,11 @@ function EditExerciseForm({ data, exercise, onCancel, onSave }) {
         <span style={{ marginLeft: 8 }}>« Poids du corps » par défaut (au lieu des kg)</span>
       </label>
 
+      <label style={{ ...styles.checkItem, marginTop: 8, cursor: "pointer" }}>
+        <input type="checkbox" checked={tempsEffort} onChange={(e) => setTempsEffort(e.target.checked)} />
+        <span style={{ marginLeft: 8 }}>« Temps d'effort » par défaut (secondes au lieu des répétitions)</span>
+      </label>
+
       <label style={styles.fieldLabel}>Temps de repos par série (optionnel)</label>
       <RestTimesFields tempsRepos={tempsRepos} onChange={setTempsRepos} />
 
@@ -12075,6 +12128,7 @@ function EditExerciseForm({ data, exercise, onCancel, onSave }) {
               videoUrl: videoUrl.trim(),
               maison,
               poidsDuCorps,
+              tempsEffort,
               tempsRepos,
             })
           }
